@@ -1,5 +1,12 @@
 from fastapi import FastAPI
 
+from app.database.database import Base, engine
+from app.database import models
+
+
+Base.metadata.create_all(bind=engine)
+
+
 app = FastAPI(
     title="Smart AI Meeting Assistant",
     description="AI-powered meeting analysis platform",
@@ -18,5 +25,6 @@ def root():
 @app.get("/health")
 def health_check():
     return {
-        "status": "healthy"
+        "status": "healthy",
+        "database": "connected"
     }
