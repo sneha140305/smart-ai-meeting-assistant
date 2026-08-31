@@ -6,6 +6,9 @@ __pycache__/
 # Environment
 .env
 
+# Database
+*.db
+
 # Uploads
 backend/uploads/
 
@@ -19,6 +22,3 @@ dist/
 # OS
 .DS_Store
 Thumbs.db
-
-# Database
-*.db
