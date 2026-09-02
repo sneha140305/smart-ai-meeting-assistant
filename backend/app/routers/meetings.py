@@ -16,7 +16,7 @@ from app.core.dependencies import get_current_user
 from app.database.database import get_db
 from app.database.models import Meeting, User
 from app.schemas.meeting import MeetingResponse
-
+from app.services.audio_processor import extract_audio
 
 router = APIRouter(
     prefix="/meetings",
@@ -89,7 +89,7 @@ async def upload_meeting(
         title=title,
         file_name=file.filename,
         file_path=file_path,
-        status="uploaded",
+        status="preprocessing",
         owner_id=current_user.id
     )
 
@@ -97,7 +97,20 @@ async def upload_meeting(
     db.commit()
     db.refresh(meeting)
 
+    try:
+        audio_path = extract_audio(
+            file_path,
+            meeting.id
+        )
+        meeting.status = "audio_ready"
+    except RuntimeError:
+        meeting.status = "processing_failed"
+
+    db.commit()
+    db.refresh(meeting)
+
     return meeting
+
 
 @router.get(
     "/",
