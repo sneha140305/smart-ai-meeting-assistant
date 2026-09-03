@@ -3,11 +3,12 @@ import subprocess
 from pathlib import Path
 
 
-PROCESSED_DIRECTORY = "processed_audio"
+BASE_DIR = Path(__file__).resolve().parents[2]
 
+PROCESSED_DIRECTORY = BASE_DIR / "processed_audio"
 
-os.makedirs(
-    PROCESSED_DIRECTORY,
+PROCESSED_DIRECTORY.mkdir(
+    parents=True,
     exist_ok=True
 )
 
@@ -17,8 +18,8 @@ def extract_audio(
     meeting_id: int
 ) -> str:
 
-    output_file = os.path.join(
-        PROCESSED_DIRECTORY,
+    output_file = (
+        PROCESSED_DIRECTORY /
         f"meeting_{meeting_id}.wav"
     )
 
@@ -34,7 +35,7 @@ def extract_audio(
         "16000",
         "-sample_fmt",
         "s16",
-        output_file
+        str(output_file)
     ]
 
     try:
@@ -60,4 +61,4 @@ def extract_audio(
             f"Audio processing failed: {error_message}"
         )
 
-    return output_file
+    return str(output_file)

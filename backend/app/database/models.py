@@ -95,6 +95,11 @@ class Meeting(Base):
         back_populates="meeting"
     )
 
+    audio_path = Column(
+        String(500),
+        nullable=True
+    )
+
 
 class Transcript(Base):
     __tablename__ = "transcripts"
@@ -112,6 +117,11 @@ class Transcript(Base):
 
     language = Column(
         String(20),
+        nullable=True
+    )
+
+    segments = Column(
+        Text,
         nullable=True
     )
 

@@ -1,5 +1,7 @@
 import os
 import uuid
+import json
+from app.services.transcription import transcribe_audio
 
 from fastapi import (
     APIRouter,
@@ -14,9 +16,14 @@ from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user
 from app.database.database import get_db
-from app.database.models import Meeting, User
+from app.database.models import (
+    Meeting,
+    User,
+    Transcript
+)
 from app.schemas.meeting import MeetingResponse
 from app.services.audio_processor import extract_audio
+from app.services.transcription import transcribe_audio
 
 router = APIRouter(
     prefix="/meetings",
@@ -102,6 +109,7 @@ async def upload_meeting(
             file_path,
             meeting.id
         )
+        meeting.audio_path = audio_path
         meeting.status = "audio_ready"
     except RuntimeError:
         meeting.status = "processing_failed"
@@ -128,3 +136,150 @@ def get_my_meetings(
     ).all()
 
     return meetings
+
+@router.post("/{meeting_id}/transcribe")
+def transcribe_meeting(
+    meeting_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+
+    meeting = db.query(Meeting).filter(
+        Meeting.id == meeting_id,
+        Meeting.owner_id == current_user.id
+    ).first()
+
+    if meeting is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Meeting not found"
+        )
+
+    if meeting.status != "audio_ready":
+        raise HTTPException(
+            status_code=400,
+            detail="Meeting audio is not ready"
+        )
+
+    if not meeting.audio_path:
+        raise HTTPException(
+            status_code=400,
+            detail="Processed audio file not found"
+        )
+
+    meeting.status = "transcribing"
+    db.commit()
+
+    try:
+        result = transcribe_audio(
+            meeting.audio_path
+        )
+
+
+        full_text = " ".join(
+            segment["text"]
+            for segment in result["segments"]
+        )
+
+        transcript = Transcript(
+            content=full_text,
+            language=result["language"],
+            segments=json.dumps(
+                result["segments"]
+            ),
+            meeting_id=meeting.id
+        )
+
+        db.add(transcript)
+
+        meeting.status = "transcribed"
+
+        db.commit()
+        db.refresh(transcript)
+
+        return {
+            "message": "Transcription completed",
+            "meeting_id": meeting.id,
+            "language": result["language"],
+            "segments": result["segments"]
+        }
+
+    except Exception as error:
+
+        meeting.status = "transcription_failed"
+        db.commit()
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Transcription failed: {error}"
+        )
+
+@router.post("/{meeting_id}/transcribe")
+def transcribe_meeting(
+    meeting_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+
+    meeting = db.query(Meeting).filter(
+        Meeting.id == meeting_id,
+        Meeting.owner_id == current_user.id
+    ).first()
+
+    if meeting is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Meeting not found"
+        )
+
+    if meeting.status != "audio_ready":
+        raise HTTPException(
+            status_code=400,
+            detail="Meeting audio is not ready"
+        )
+
+    meeting.status = "transcribing"
+    db.commit()
+
+    try:
+        result = transcribe_audio(
+            meeting.audio_path
+        )
+
+        full_text = " ".join(
+            segment["text"]
+            for segment in result["segments"]
+        )
+
+        transcript = Transcript(
+            content=full_text,
+            language=result["language"],
+            segments=json.dumps(
+                result["segments"]
+            ),
+            meeting_id=meeting.id
+        )
+
+        db.add(transcript)
+
+        meeting.status = "transcribed"
+
+        db.commit()
+        db.refresh(transcript)
+
+        return {
+            "message": "Transcription completed",
+            "meeting_id": meeting.id,
+            "language": result["language"],
+            "segments": result["segments"]
+        }
+
+    except Exception as error:
+
+        meeting.status = "transcription_failed"
+        db.commit()
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Transcription failed: {error}"
+        )
