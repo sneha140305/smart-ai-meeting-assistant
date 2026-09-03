@@ -2,6 +2,8 @@ import os
 import uuid
 import json
 from app.services.transcription import transcribe_audio
+from app.services.diarization import diarize_audio
+from app.services.transcript_merger import assign_speakers
 
 from fastapi import (
     APIRouter,
@@ -246,16 +248,25 @@ def transcribe_meeting(
             meeting.audio_path
         )
 
-        full_text = " ".join(
-            segment["text"]
-            for segment in result["segments"]
+        speaker_segments = diarize_audio(
+            meeting.audio_path
+        )
+
+        merged_segments = assign_speakers(
+            result["segments"],
+            speaker_segments
+        )
+
+        full_text = "\n".join(
+            f"{segment['speaker']}: {segment['text']}"
+            for segment in merged_segments
         )
 
         transcript = Transcript(
             content=full_text,
             language=result["language"],
             segments=json.dumps(
-                result["segments"]
+                merged_segments
             ),
             meeting_id=meeting.id
         )
