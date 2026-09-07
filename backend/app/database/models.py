@@ -17,9 +17,16 @@ from .database import Base
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(
+        Integer,
+        primary_key=True,
+        index=True
+    )
 
-    name = Column(String(100), nullable=False)
+    name = Column(
+        String(100),
+        nullable=False
+    )
 
     email = Column(
         String(150),
@@ -28,23 +35,32 @@ class User(Base):
         index=True
     )
 
-    password_hash = Column(String(255), nullable=False)
+    password_hash = Column(
+        String(255),
+        nullable=False
+    )
 
     created_at = Column(
         DateTime,
         default=datetime.utcnow
     )
 
+    # One user can have many meetings
     meetings = relationship(
         "Meeting",
-        back_populates="owner"
+        back_populates="owner",
+        cascade="all, delete-orphan"
     )
 
 
 class Meeting(Base):
     __tablename__ = "meetings"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(
+        Integer,
+        primary_key=True,
+        index=True
+    )
 
     title = Column(
         String(200),
@@ -61,11 +77,34 @@ class Meeting(Base):
         nullable=False
     )
 
-    duration = Column(Integer, nullable=True)
+    audio_path = Column(
+        String(500),
+        nullable=True
+    )
+
+    duration = Column(
+        Integer,
+        nullable=True
+    )
 
     status = Column(
         String(50),
         default="uploaded"
+    )
+
+    summary = Column(
+        Text,
+        nullable=True
+    )
+
+    key_points = Column(
+        Text,
+        nullable=True
+    )
+
+    decisions = Column(
+        Text,
+        nullable=True
     )
 
     created_at = Column(
@@ -79,6 +118,7 @@ class Meeting(Base):
         nullable=False
     )
 
+    # This was missing / incorrect
     owner = relationship(
         "User",
         back_populates="meetings"
@@ -87,17 +127,14 @@ class Meeting(Base):
     transcript = relationship(
         "Transcript",
         back_populates="meeting",
-        uselist=False
+        uselist=False,
+        cascade="all, delete-orphan"
     )
 
     action_items = relationship(
         "ActionItem",
-        back_populates="meeting"
-    )
-
-    audio_path = Column(
-        String(500),
-        nullable=True
+        back_populates="meeting",
+        cascade="all, delete-orphan"
     )
 
 
