@@ -45,7 +45,6 @@ class User(Base):
         default=datetime.utcnow
     )
 
-    # One user can have many meetings
     meetings = relationship(
         "Meeting",
         back_populates="owner",
@@ -118,7 +117,6 @@ class Meeting(Base):
         nullable=False
     )
 
-    # This was missing / incorrect
     owner = relationship(
         "User",
         back_populates="meetings"
@@ -133,6 +131,37 @@ class Meeting(Base):
 
     action_items = relationship(
         "ActionItem",
+        back_populates="meeting",
+        cascade="all, delete-orphan"
+    )
+
+    total_words = Column(
+        Integer,
+        default=0
+    )
+
+    speaker_count = Column(
+        Integer,
+        default=0
+    )
+
+    positive_sentiment = Column(
+        Integer,
+        default=0
+    )
+
+    negative_sentiment = Column(
+        Integer,
+        default=0
+    )
+
+    neutral_sentiment = Column(
+        Integer,
+        default=0
+    )
+
+    speaker_analytics = relationship(
+        "SpeakerAnalytics",
         back_populates="meeting",
         cascade="all, delete-orphan"
     )
@@ -218,4 +247,40 @@ class ActionItem(Base):
     meeting = relationship(
         "Meeting",
         back_populates="action_items"
+    )
+
+
+class SpeakerAnalytics(Base):
+    __tablename__ = "speaker_analytics"
+
+    id = Column(
+        Integer,
+        primary_key=True,
+        index=True
+    )
+
+    speaker = Column(
+        String(100),
+        nullable=False
+    )
+
+    speaking_time = Column(
+        Integer,
+        default=0
+    )
+
+    word_count = Column(
+        Integer,
+        default=0
+    )
+
+    meeting_id = Column(
+        Integer,
+        ForeignKey("meetings.id"),
+        nullable=False
+    )
+
+    meeting = relationship(
+        "Meeting",
+        back_populates="speaker_analytics"
     )

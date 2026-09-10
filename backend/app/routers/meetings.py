@@ -27,7 +27,9 @@ from app.services.audio_processor import extract_audio
 from app.services.transcription import transcribe_audio
 from app.services.meeting_ai import analyze_meeting
 from app.services.analytics import calculate_meeting_analytics
-
+from app.services.transcription import transcribe_audio
+from app.services.diarization import diarize_audio
+from app.services.transcript_merger import assign_speakers
 
 router = APIRouter(
     prefix="/meetings",
@@ -199,8 +201,8 @@ def get_meeting(
 )
 def transcribe_meeting(
     meeting_id: int,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
 
     meeting = (
@@ -212,7 +214,7 @@ def transcribe_meeting(
         .first()
     )
 
-    if meeting is None:
+    if not meeting:
         raise HTTPException(
             status_code=404,
             detail="Meeting not found"
@@ -233,55 +235,27 @@ def transcribe_meeting(
             detail="Processed audio file not found"
         )
 
-    if not os.path.exists(meeting.audio_path):
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Processed audio file does not exist: "
-                f"{meeting.audio_path}"
-            )
-        )
-
-    meeting.status = "transcribing"
-
-    db.commit()
-
     try:
-        result = transcribe_audio(
+        meeting.status = "transcribing"
+        db.commit()
+
+        transcription  = transcribe_audio(
             meeting.audio_path
         )
-        transcript_segments = []
-
-        for segment in result["segments"]:
-
-            transcript_segments.append(
-                {
-                    "start": segment["start"],
-                    "end": segment["end"],
-                    "speaker": "UNKNOWN",
-                    "text": segment["text"]
-                }
-            )
-
-        full_text = "\n".join(
-            f"{segment['speaker']}: {segment['text']}"
-            for segment in transcript_segments
+        speaker_segments = diarize_audio(meeting.audio_path)
+        merged_segments = assign_speakers(
+            transcription["segments"],
+            speaker_segments
         )
 
-        if meeting.transcript is not None:
-
-            db.delete(
-                meeting.transcript
-            )
-
-            db.flush()
-
+        full_text = " ".join(
+            segment["text"]
+            for segment in merged_segments
+        )
         transcript = Transcript(
             content=full_text,
-            language=result["language"],
-            segments=json.dumps(
-                transcript_segments
-            ),
+            language=transcription["language"],
+            segments=json.dumps(merged_segments),
             meeting_id=meeting.id
         )
 
@@ -293,37 +267,21 @@ def transcribe_meeting(
         db.refresh(transcript)
 
         return {
-            "message": "Transcription completed",
+            "message": "Transcription and speaker identification completed",
             "meeting_id": meeting.id,
-            "language": result["language"],
-            "language_probability": result[
-                "language_probability"
-            ],
-            "segments": transcript_segments
+            "language": transcription["language"],
+            "language_probability": transcription["language_probability"],
+            "segments": merged_segments
         }
-
-    except Exception as error:
-
+    except Exception as exc:
         db.rollback()
 
-        meeting = (
-            db.query(Meeting)
-            .filter(
-                Meeting.id == meeting_id,
-                Meeting.owner_id == current_user.id
-            )
-            .first()
-        )
-
-        if meeting is not None:
-
-            meeting.status = "transcription_failed"
-
-            db.commit()
+        meeting.status = "transcription_failed"
+        db.commit()
 
         raise HTTPException(
             status_code=500,
-            detail=f"Transcription failed: {error}"
+            detail=f"Transcription failed: {exc}"
         )
 
 @router.post(
@@ -460,10 +418,6 @@ def analyze_meeting_endpoint(
             )
         )
 
-
-# ---------------------------------------------------------
-# Meeting Analytics
-# ---------------------------------------------------------
 
 @router.get(
     "/{meeting_id}/analytics"
