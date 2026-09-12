@@ -6,7 +6,7 @@ from pwdlib import PasswordHash
 from app.core.config import (
     SECRET_KEY,
     ALGORITHM,
-    ACCESS_TOKEN_EXPIRE_MINUTES
+    ACCESS_TOKEN_EXPIRE_MINUTES,
 )
 
 
@@ -19,27 +19,29 @@ def hash_password(password: str) -> str:
 
 def verify_password(
     plain_password: str,
-    hashed_password: str
+    hashed_password: str,
 ) -> bool:
     return password_hash.verify(
         plain_password,
-        hashed_password
+        hashed_password,
     )
 
 
 def create_access_token(data: dict) -> str:
+
     payload = data.copy()
 
-    expire_time = datetime.now(timezone.utc) + timedelta(
-        minutes=ACCESS_TOKEN_EXPIRE_MINUTES
+    expire_time = (
+        datetime.now(timezone.utc)
+        + timedelta(
+            minutes=ACCESS_TOKEN_EXPIRE_MINUTES
+        )
     )
 
-    payload.update({
-        "exp": expire_time
-    })
+    payload["exp"] = expire_time
 
     return jwt.encode(
         payload,
         SECRET_KEY,
-        algorithm=ALGORITHM
+        algorithm=ALGORITHM,
     )

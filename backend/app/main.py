@@ -4,7 +4,7 @@ from app.database.database import Base, engine
 from app.database import models
 from app.routers.auth import router as auth_router
 from app.routers.meetings import router as meetings_router
-
+from fastapi.middleware.cors import CORSMiddleware
 
 Base.metadata.create_all(bind=engine)
 
@@ -13,6 +13,16 @@ app = FastAPI(
     title="Smart AI Meeting Assistant",
     description="AI-powered meeting analysis platform",
     version="1.0.0"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173"
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
