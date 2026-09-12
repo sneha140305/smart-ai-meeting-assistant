@@ -6,6 +6,7 @@ from fastapi import (
     APIRouter,
     Depends,
     File,
+    Form,
     HTTPException,
     UploadFile,
     status
@@ -60,11 +61,10 @@ os.makedirs(
 
 @router.post(
     "/upload",
-    response_model=MeetingResponse,
-    status_code=status.HTTP_201_CREATED
+    response_model=MeetingResponse
 )
 async def upload_meeting(
-    title: str,
+    title: str=Form(...),
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)

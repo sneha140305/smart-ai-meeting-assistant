@@ -5,7 +5,7 @@ import {
 } from "react-router-dom";
 
 import { AuthProvider } from "./context/AuthContext";
-
+import NewMeeting from "./pages/NewMeeting";
 import ProtectedRoute from "./components/ProtectedRoute";
 
 import Login from "./pages/Login";
@@ -37,6 +37,15 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <Dashboard />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/new-meeting"
+            element={
+              <ProtectedRoute>
+                <NewMeeting />
               </ProtectedRoute>
             }
           />
