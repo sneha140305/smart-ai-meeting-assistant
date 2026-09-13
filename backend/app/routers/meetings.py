@@ -26,7 +26,7 @@ from app.schemas.meeting import MeetingResponse
 
 from app.services.audio_processor import extract_audio
 from app.services.transcription import transcribe_audio
-from app.services.meeting_ai import analyze_meeting
+from app.services.meeting_ai import analyze_meeting as ai_analyze_meeting
 from app.services.analytics import calculate_meeting_analytics
 from app.services.transcription import transcribe_audio
 from app.services.diarization import diarize_audio
@@ -345,7 +345,7 @@ def get_meeting_transcript(
             segments = json.loads(transcript.segments)
         except json.JSONDecodeError:
             segments = []
-            
+
     return {
         "id": transcript.id,
         "content": transcript.content,
@@ -353,15 +353,12 @@ def get_meeting_transcript(
         "segments": segments
     }
 
-@router.post(
-    "/{meeting_id}/analyze"
-)
+@router.post("/{meeting_id}/analyze")
 def analyze_meeting_endpoint(
     meeting_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-
     meeting = (
         db.query(Meeting)
         .filter(
@@ -371,51 +368,95 @@ def analyze_meeting_endpoint(
         .first()
     )
 
-    if meeting is None:
+    if not meeting:
         raise HTTPException(
             status_code=404,
             detail="Meeting not found"
         )
 
-    if meeting.status != "transcribed":
+    transcript = (
+        db.query(Transcript)
+        .filter(
+            Transcript.meeting_id == meeting_id
+        )
+        .first()
+    )
+
+    if not transcript:
         raise HTTPException(
             status_code=400,
-            detail=(
-                "Meeting must be transcribed first. "
-                f"Current status: {meeting.status}"
+            detail="Please transcribe the meeting first."
+        )
+
+    try:
+        meeting.status = "analyzing"
+        db.commit()
+
+        # --------------------------------
+        # GET TRANSCRIPT
+        # --------------------------------
+
+        transcript_text = transcript.content or ""
+
+        if not transcript_text.strip():
+            raise ValueError(
+                "Transcript is empty."
+            )
+
+        # --------------------------------
+        # AI ANALYSIS
+        # --------------------------------
+
+        from app.services.meeting_ai import analyze_meeting
+
+        result = analyze_meeting(
+            transcript_text
+        )
+
+        # --------------------------------
+        # SAVE SUMMARY
+        # --------------------------------
+
+        meeting.summary = result.get(
+            "summary",
+            ""
+        )
+
+        meeting.key_points = json.dumps(
+            result.get(
+                "key_points",
+                []
             )
         )
 
-    if meeting.transcript is None:
-        raise HTTPException(
-            status_code=400,
-            detail="Transcript not available"
-        )
-
-    meeting.status = "analyzing"
-
-    db.commit()
-
-    try:
-        result = analyze_meeting(
-            meeting.transcript.content
-        )
-
-        meeting.summary = result[
-            "summary"
-        ]
-
-        meeting.key_points = json.dumps(
-            result["key_points"]
-        )
-
         meeting.decisions = json.dumps(
-            result["decisions"]
+            result.get(
+                "decisions",
+                []
+            )
         )
 
-        for item in result[
-            "action_items"
-        ]:
+        # --------------------------------
+        # DELETE OLD ACTION ITEMS
+        # --------------------------------
+
+        db.query(ActionItem).filter(
+            ActionItem.meeting_id == meeting_id
+        ).delete()
+
+        # --------------------------------
+        # SAVE ACTION ITEMS
+        # --------------------------------
+
+        action_items = result.get(
+            "action_items",
+            []
+        )
+
+        for item in action_items:
+
+            if not isinstance(item, dict):
+                continue
 
             action_item = ActionItem(
                 task=item.get(
@@ -431,12 +472,92 @@ def analyze_meeting_endpoint(
                     "Not mentioned"
                 ),
                 status="pending",
-                meeting_id=meeting.id
+                meeting_id=meeting_id
             )
 
-            db.add(
-                action_item
-            )
+            db.add(action_item)
+
+        # --------------------------------
+        # ANALYTICS
+        # --------------------------------
+
+        analytics = {}
+
+        if transcript.segments:
+
+            try:
+                transcript_segments = json.loads(
+                    transcript.segments
+                )
+
+                from app.services.analytics import (
+                    calculate_meeting_analytics
+                )
+
+                analytics = calculate_meeting_analytics(
+                    transcript_segments
+                )
+
+                meeting.total_words = analytics.get(
+                    "total_words",
+                    0
+                )
+
+                meeting.speaker_count = analytics.get(
+                    "speaker_count",
+                    0
+                )
+
+                sentiment = analytics.get(
+                    "sentiment",
+                    {}
+                )
+
+                meeting.positive_sentiment = sentiment.get(
+                    "positive",
+                    0
+                )
+
+                meeting.negative_sentiment = sentiment.get(
+                    "negative",
+                    0
+                )
+
+                meeting.neutral_sentiment = sentiment.get(
+                    "neutral",
+                    0
+                )
+
+                # --------------------------------
+                # UPDATE DURATION
+                # --------------------------------
+
+                if transcript_segments:
+
+                    latest_end = max(
+                        float(
+                            segment.get(
+                                "end",
+                                0
+                            )
+                        )
+                        for segment in transcript_segments
+                    )
+
+                    meeting.duration = round(
+                        latest_end
+                    )
+
+            except Exception as analytics_error:
+
+                print(
+                    "Analytics warning:",
+                    analytics_error
+                )
+
+        # --------------------------------
+        # COMPLETE
+        # --------------------------------
 
         meeting.status = "completed"
 
@@ -444,49 +565,30 @@ def analyze_meeting_endpoint(
         db.refresh(meeting)
 
         return {
-            "message": "Meeting analysis completed",
+            "message": "Meeting analysis completed.",
             "meeting_id": meeting.id,
-            "summary": result[
-                "summary"
-            ],
-            "key_points": result[
-                "key_points"
-            ],
-            "decisions": result[
-                "decisions"
-            ],
-            "action_items": result[
-                "action_items"
-            ]
+            "summary": meeting.summary,
+            "key_points": result.get(
+                "key_points",
+                []
+            ),
+            "decisions": result.get(
+                "decisions",
+                []
+            ),
+            "action_items": action_items,
+            "analytics": analytics
         }
 
     except Exception as error:
 
-        db.rollback()
-
-        meeting = (
-            db.query(Meeting)
-            .filter(
-                Meeting.id == meeting_id,
-                Meeting.owner_id == current_user.id
-            )
-            .first()
-        )
-
-        if meeting is not None:
-
-            meeting.status = "analysis_failed"
-
-            db.commit()
+        meeting.status = "analysis_failed"
+        db.commit()
 
         raise HTTPException(
             status_code=500,
-            detail=(
-                f"Meeting analysis failed: "
-                f"{error}"
-            )
+            detail=f"Meeting analysis failed: {str(error)}"
         )
-
 
 @router.get(
     "/{meeting_id}/analytics"
@@ -629,3 +731,153 @@ def diarize_meeting(
             detail=f"Speaker diarization failed: {str(error)}"
         )
 
+    
+@router.get("/{meeting_id}/action-items")
+def get_action_items(
+    meeting_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    meeting = (
+        db.query(Meeting)
+        .filter(
+            Meeting.id == meeting_id,
+            Meeting.owner_id == current_user.id
+        )
+        .first()
+    )
+
+    if not meeting:
+        raise HTTPException(
+            status_code=404,
+            detail="Meeting not found"
+        )
+
+    action_items = (
+        db.query(ActionItem)
+        .filter(ActionItem.meeting_id == meeting_id)
+        .all()
+    )
+
+    return action_items
+
+@router.get("/{meeting_id}/speaker-analytics")
+def get_speaker_analytics(
+    meeting_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    meeting = (
+        db.query(Meeting)
+        .filter(
+            Meeting.id == meeting_id,
+            Meeting.owner_id == current_user.id
+        )
+        .first()
+    )
+
+    if not meeting:
+        raise HTTPException(
+            status_code=404,
+            detail="Meeting not found"
+        )
+
+    transcript = (
+        db.query(Transcript)
+        .filter(
+            Transcript.meeting_id == meeting_id
+        )
+        .first()
+    )
+
+    if not transcript:
+        raise HTTPException(
+            status_code=400,
+            detail="Transcript not available."
+        )
+
+    try:
+        segments = json.loads(
+            transcript.segments or "[]"
+        )
+
+        from app.services.analytics import (
+            calculate_meeting_analytics
+        )
+
+        analytics = calculate_meeting_analytics(
+            segments
+        )
+
+        return {
+            "meeting_id": meeting_id,
+            "speaker_count": analytics["speaker_count"],
+            "total_words": analytics["total_words"],
+            "speakers": analytics["speakers"]
+        }
+
+    except Exception as error:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unable to calculate speaker analytics: {str(error)}"
+        )
+
+@router.patch("/{meeting_id}/action-items/{action_item_id}")
+def update_action_item(
+    meeting_id: int,
+    action_item_id: int,
+    status: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    meeting = (
+        db.query(Meeting)
+        .filter(
+            Meeting.id == meeting_id,
+            Meeting.owner_id == current_user.id
+        )
+        .first()
+    )
+
+    if not meeting:
+        raise HTTPException(
+            status_code=404,
+            detail="Meeting not found"
+        )
+
+    action_item = (
+        db.query(ActionItem)
+        .filter(
+            ActionItem.id == action_item_id,
+            ActionItem.meeting_id == meeting_id
+        )
+        .first()
+    )
+
+    if not action_item:
+        raise HTTPException(
+            status_code=404,
+            detail="Action item not found"
+        )
+
+    allowed_statuses = ["pending", "in_progress", "completed"]
+
+    if status not in allowed_statuses:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Status must be one of: {', '.join(allowed_statuses)}"
+        )
+
+    action_item.status = status
+
+    db.commit()
+    db.refresh(action_item)
+
+    return {
+        "id": action_item.id,
+        "task": action_item.task,
+        "assigned_to": action_item.assigned_to,
+        "deadline": action_item.deadline,
+        "status": action_item.status,
+        "meeting_id": action_item.meeting_id
+    }
