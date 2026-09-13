@@ -11,7 +11,7 @@ import ProtectedRoute from "./components/ProtectedRoute";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import Dashboard from "./pages/Dashboard";
-
+import MeetingDetails from "./pages/MeetingDetails";
 
 export default function App() {
 
@@ -46,6 +46,15 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <NewMeeting />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/meetings/:meetingId"
+            element={
+              <ProtectedRoute>
+                <MeetingDetails />
               </ProtectedRoute>
             }
           />

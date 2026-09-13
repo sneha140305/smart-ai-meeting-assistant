@@ -82,6 +82,7 @@ export default function Dashboard() {
         "preprocessing",
         "audio_ready",
         "transcribing",
+        "diarizing",
         "analyzing",
       ].includes(meeting.status?.toLowerCase())
   ).length;
@@ -125,6 +126,7 @@ export default function Dashboard() {
       normalized === "preprocessing" ||
       normalized === "audio_ready" ||
       normalized === "transcribing" ||
+      normalized === "diarizing" ||
       normalized === "analyzing"
     ) {
       return "bg-yellow-100 text-yellow-700";

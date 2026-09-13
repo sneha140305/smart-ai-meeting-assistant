@@ -1,18 +1,17 @@
 import os
-
-import av
 import numpy as np
+import soundfile as sf
 import torch
+
 from dotenv import load_dotenv
 from pyannote.audio import Pipeline
-
 
 load_dotenv()
 
 HF_TOKEN = os.getenv("HF_TOKEN")
 
 if not HF_TOKEN:
-    raise RuntimeError("HF_TOKEN is not configured in the .env file.")
+    raise RuntimeError("HF_TOKEN is not configured in .env")
 
 
 pipeline = Pipeline.from_pretrained(
@@ -21,100 +20,94 @@ pipeline = Pipeline.from_pretrained(
 )
 
 
-def load_audio_for_diarization(
-    audio_path: str,
-    sampling_rate: int = 16000
-):
-    """
-    Load audio using PyAV so Pyannote does not need TorchCodec.
-    Returns a waveform dictionary compatible with pyannote.audio 4.x.
-    """
+def diarize_audio(audio_path: str):
+    print("\n" + "=" * 60)
+    print("STARTING SPEAKER DIARIZATION")
+    print("=" * 60)
 
-    try:
-        container = av.open(audio_path)
+    if not os.path.exists(audio_path):
+        raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
-        audio_stream = next(
-            (
-                stream
-                for stream in container.streams
-                if stream.type == "audio"
-            ),
-            None
+    print(f"Audio file: {audio_path}")
+
+    # ---------------------------------------------------------
+    # Load audio using soundfile
+    # This avoids TorchCodec problems on Windows
+    # ---------------------------------------------------------
+
+    waveform, sample_rate = sf.read(
+        audio_path,
+        dtype="float32"
+    )
+
+    # Convert stereo -> mono
+    if waveform.ndim == 1:
+        waveform = waveform[np.newaxis, :]
+    else:
+        waveform = waveform.T
+        waveform = np.mean(
+            waveform,
+            axis=0,
+            keepdims=True
         )
 
-        if audio_stream is None:
-            container.close()
-            raise RuntimeError("No audio stream found.")
+    waveform_tensor = torch.from_numpy(
+        waveform
+    ).float()
 
-        resampler = av.audio.resampler.AudioResampler(
-            format="s16",
-            layout="mono",
-            rate=sampling_rate
-        )
+    print(f"Loaded audio: {waveform_tensor.shape[1]} samples")
+    print(f"Sample rate: {sample_rate}")
+    print(f"Waveform shape: {waveform_tensor.shape}")
 
-        audio_chunks = []
+    audio = {
+        "waveform": waveform_tensor,
+        "sample_rate": sample_rate
+    }
 
-        for frame in container.decode(audio=0):
-            resampled_frames = resampler.resample(frame)
+    # ---------------------------------------------------------
+    # Automatic speaker detection
+    # ---------------------------------------------------------
 
-            if not isinstance(resampled_frames, list):
-                resampled_frames = [resampled_frames]
+    output = pipeline(audio)
 
-            for resampled_frame in resampled_frames:
-                audio_array = resampled_frame.to_ndarray()
+    print("\n" + "=" * 60)
+    print("PYANNOTE OUTPUT")
+    print("=" * 60)
 
-                if audio_array.ndim > 1:
-                    audio_array = audio_array[0]
+    speaker_segments = []
 
-                audio_chunks.append(audio_array)
+    for turn, speaker in output.speaker_diarization:
 
-        container.close()
+        speaker_name = str(speaker)
 
-        if not audio_chunks:
-            raise RuntimeError("No audio data could be decoded.")
-
-        audio = np.concatenate(audio_chunks).astype(np.float32)
-
-        # Convert int16 audio to float32 range [-1, 1]
-        audio /= 32768.0
-
-        waveform = torch.from_numpy(audio).unsqueeze(0)
-
-        return {
-            "waveform": waveform,
-            "sample_rate": sampling_rate
+        segment = {
+            "start": round(float(turn.start), 2),
+            "end": round(float(turn.end), 2),
+            "speaker": speaker_name
         }
 
-    except Exception as exc:
-        raise RuntimeError(
-            f"Could not load audio for diarization: {exc}"
-        ) from exc
+        speaker_segments.append(segment)
 
+        print(
+            f"{segment['start']}s - "
+            f"{segment['end']}s : "
+            f"{segment['speaker']}"
+        )
 
-def diarize_audio(audio_path: str):
-    """
-    Identify different speakers and return their speaking intervals.
-    """
+    # ---------------------------------------------------------
+    # Speaker statistics
+    # ---------------------------------------------------------
 
-    audio = load_audio_for_diarization(audio_path)
+    unique_speakers = sorted(
+        {
+            segment["speaker"]
+            for segment in speaker_segments
+        }
+    )
 
-    try:
-        output = pipeline(audio)
+    print("\n" + "=" * 60)
+    print(f"DETECTED SPEAKERS: {len(unique_speakers)}")
+    print(f"SPEAKER LABELS: {set(unique_speakers)}")
+    print("=" * 60)
 
-        speaker_segments = []
-
-        for turn, speaker in output.speaker_diarization:
-            speaker_segments.append(
-                {
-                    "start": round(turn.start, 2),
-                    "end": round(turn.end, 2),
-                    "speaker": str(speaker)
-                }
-            )
-
-        return speaker_segments
-
-    except Exception as exc:
-        raise RuntimeError(
-            f"Speaker diarization failed: {exc}"
-        ) from exc
+    return speaker_segments

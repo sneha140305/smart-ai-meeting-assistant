@@ -167,6 +167,28 @@ def get_my_meetings(
 
     return meetings
 
+@router.get("/{meeting_id}", response_model=MeetingResponse)
+def get_meeting(
+    meeting_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    meeting = (
+        db.query(Meeting)
+        .filter(
+            Meeting.id == meeting_id,
+            Meeting.owner_id == current_user.id
+        )
+        .first()
+    )
+
+    if not meeting:
+        raise HTTPException(
+            status_code=404,
+            detail="Meeting not found"
+        )
+
+    return meeting
 
 @router.get(
     "/{meeting_id}",
@@ -283,6 +305,53 @@ def transcribe_meeting(
             status_code=500,
             detail=f"Transcription failed: {exc}"
         )
+
+@router.get("/{meeting_id}/transcript")
+def get_meeting_transcript(
+    meeting_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    meeting = (
+        db.query(Meeting)
+        .filter(
+            Meeting.id == meeting_id,
+            Meeting.owner_id == current_user.id
+        )
+        .first()
+    )
+
+    if not meeting:
+        raise HTTPException(
+            status_code=404,
+            detail="Meeting not found"
+        )
+
+    transcript = (
+        db.query(Transcript)
+        .filter(Transcript.meeting_id == meeting_id)
+        .first()
+    )
+
+    if not transcript:
+        raise HTTPException(
+            status_code=404,
+            detail="Transcript not available yet"
+        )
+
+    segments = []
+    if transcript.segments:
+        try:
+            segments = json.loads(transcript.segments)
+        except json.JSONDecodeError:
+            segments = []
+            
+    return {
+        "id": transcript.id,
+        "content": transcript.content,
+        "language": transcript.language,
+        "segments": segments
+    }
 
 @router.post(
     "/{meeting_id}/analyze"
@@ -473,4 +542,90 @@ def get_meeting_analytics(
     )
 
     return analytics
+
+@router.post("/{meeting_id}/diarize")
+def diarize_meeting(
+    meeting_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    meeting = (
+        db.query(Meeting)
+        .filter(
+            Meeting.id == meeting_id,
+            Meeting.owner_id == current_user.id
+        )
+        .first()
+    )
+
+    if not meeting:
+        raise HTTPException(
+            status_code=404,
+            detail="Meeting not found"
+        )
+
+    transcript = (
+        db.query(Transcript)
+        .filter(Transcript.meeting_id == meeting_id)
+        .first()
+    )
+
+    if not transcript:
+        raise HTTPException(
+            status_code=400,
+            detail="Please transcribe the meeting first."
+        )
+
+    if not meeting.audio_path:
+        raise HTTPException(
+            status_code=400,
+            detail="Processed audio is not available."
+        )
+
+    try:
+        meeting.status = "diarizing"
+        db.commit()
+
+        transcript_segments = json.loads(
+            transcript.segments or "[]"
+        )
+
+        speaker_segments = diarize_audio(
+            meeting.audio_path
+        )
+
+        merged_segments = assign_speakers(
+            transcript_segments,
+            speaker_segments
+        )
+
+        transcript.segments = json.dumps(
+            merged_segments
+        )
+
+        # Update readable transcript
+        transcript.content = "\n".join(
+            f"{segment.get('speaker', 'UNKNOWN')}: "
+            f"{segment.get('text', '')}"
+            for segment in merged_segments
+        )
+
+        meeting.status = "transcribed"
+
+        db.commit()
+        db.refresh(transcript)
+
+        return {
+            "message": "Speaker diarization completed.",
+            "segments": merged_segments
+        }
+
+    except Exception as error:
+        meeting.status = "diarization_failed"
+        db.commit()
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Speaker diarization failed: {str(error)}"
+        )
 
