@@ -1,23 +1,26 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import api from "../services/api";
+
 import {
   ArrowLeft,
   BarChart3,
   CalendarDays,
   CheckCircle2,
-  Clock3,
+  ChevronDown,
+  Clock,
   FileAudio,
   Loader2,
   MessageSquareText,
-  Play,
+  RefreshCw,
   Search,
   Smile,
   Sparkles,
-  Users,
+  TrendingUp,
   User,
+  Users,
   XCircle,
 } from "lucide-react";
-import api from "../services/api";
 
 export default function MeetingDetails() {
   const { meetingId } = useParams();
@@ -26,63 +29,62 @@ export default function MeetingDetails() {
   const [meeting, setMeeting] = useState(null);
   const [transcript, setTranscript] = useState(null);
   const [actionItems, setActionItems] = useState([]);
-  const [analytics, setAnalytics] = useState(null);
+  const [speakerAnalytics, setSpeakerAnalytics] = useState([]);
 
   const [loading, setLoading] = useState(true);
-  const [processing, setProcessing] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const [transcribing, setTranscribing] = useState(false);
+  const [diarizing, setDiarizing] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
+
   const [error, setError] = useState("");
 
+  // Transcript controls
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedSpeaker, setSelectedSpeaker] = useState("ALL");
 
-  useEffect(() => {
-    loadMeetingData();
-  }, [meetingId]);
+  // --------------------------------------------------
+  // FETCH MEETING DATA
+  // --------------------------------------------------
 
-  const loadMeetingData = async () => {
+  const fetchMeetingData = async (showLoader = true) => {
     try {
-      setLoading(true);
+      if (showLoader) {
+        setLoading(true);
+      } else {
+        setRefreshing(true);
+      }
+
       setError("");
 
-      const meetingResponse = await api.get(
-        `/meetings/${meetingId}`
-      );
+      const [
+        meetingResponse,
+        transcriptResponse,
+        actionItemsResponse,
+        speakerResponse,
+      ] = await Promise.all([
+        api.get(`/meetings/${meetingId}`),
 
-      const meetingData = meetingResponse.data;
+        api
+          .get(`/meetings/${meetingId}/transcript`)
+          .catch(() => ({ data: null })),
 
-      setMeeting(meetingData);
+        api
+          .get(`/meetings/${meetingId}/action-items`)
+          .catch(() => ({ data: [] })),
 
-      setAnalytics({
-        totalWords: meetingData.total_words || 0,
-        speakerCount: meetingData.speaker_count || 0,
-        positive: meetingData.positive_sentiment || 0,
-        negative: meetingData.negative_sentiment || 0,
-        neutral: meetingData.neutral_sentiment || 0,
-      });
+        api
+          .get(`/meetings/${meetingId}/speaker-analytics`)
+          .catch(() => ({ data: [] })),
+      ]);
 
-      try {
-        const transcriptResponse = await api.get(
-          `/meetings/${meetingId}/transcript`
-        );
-
-        setTranscript(transcriptResponse.data);
-      } catch (transcriptError) {
-        console.log("Transcript not available yet.");
-        setTranscript(null);
-      }
-
-      try {
-        const actionResponse = await api.get(
-          `/meetings/${meetingId}/action-items`
-        );
-
-        setActionItems(actionResponse.data || []);
-      } catch (actionError) {
-        console.log("Action items not available yet.");
-        setActionItems([]);
-      }
+      setMeeting(meetingResponse.data);
+      setTranscript(transcriptResponse.data);
+      setActionItems(actionItemsResponse.data || []);
+      setSpeakerAnalytics(speakerResponse.data || []);
     } catch (err) {
-      console.error(err);
+      console.error("Failed to fetch meeting:", err);
 
       setError(
         err.response?.data?.detail ||
@@ -90,51 +92,89 @@ export default function MeetingDetails() {
       );
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
-  const runPipeline = async (endpoint, successMessage) => {
+  useEffect(() => {
+    fetchMeetingData(true);
+  }, [meetingId]);
+
+  // --------------------------------------------------
+  // TRANSCRIBE
+  // --------------------------------------------------
+
+  const handleTranscribe = async () => {
     try {
-      setProcessing(true);
+      setTranscribing(true);
       setError("");
 
-      await api.post(`/meetings/${meetingId}/${endpoint}`);
+      await api.post(`/meetings/${meetingId}/transcribe`);
 
-      await loadMeetingData();
-
-      alert(successMessage);
+      await fetchMeetingData(false);
     } catch (err) {
-      console.error(err);
+      console.error("Transcription failed:", err);
 
       setError(
         err.response?.data?.detail ||
-          `Failed to ${endpoint} the meeting.`
+          "Transcription failed. Please try again."
       );
     } finally {
-      setProcessing(false);
+      setTranscribing(false);
     }
   };
 
-  const handleTranscribe = () => {
-    runPipeline(
-      "transcribe",
-      "Transcription completed successfully."
-    );
+  // --------------------------------------------------
+  // DIARIZE
+  // --------------------------------------------------
+
+  const handleDiarize = async () => {
+    try {
+      setDiarizing(true);
+      setError("");
+
+      await api.post(`/meetings/${meetingId}/diarize`);
+
+      await fetchMeetingData(false);
+    } catch (err) {
+      console.error("Diarization failed:", err);
+
+      setError(
+        err.response?.data?.detail ||
+          "Speaker diarization failed. Please try again."
+      );
+    } finally {
+      setDiarizing(false);
+    }
   };
 
-  const handleDiarize = () => {
-    runPipeline(
-      "diarize",
-      "Speaker diarization completed successfully."
-    );
+  // --------------------------------------------------
+  // AI ANALYSIS
+  // --------------------------------------------------
+
+  const handleAnalyze = async () => {
+    try {
+      setAnalyzing(true);
+      setError("");
+
+      await api.post(`/meetings/${meetingId}/analyze`);
+
+      await fetchMeetingData(false);
+    } catch (err) {
+      console.error("Analysis failed:", err);
+
+      setError(
+        err.response?.data?.detail ||
+          "AI analysis failed. Please try again."
+      );
+    } finally {
+      setAnalyzing(false);
+    }
   };
 
-  const handleAnalyze = () => {
-    runPipeline(
-      "analyze",
-      "AI meeting analysis completed successfully."
-    );
-  };
+  // --------------------------------------------------
+  // ACTION ITEM STATUS
+  // --------------------------------------------------
 
   const updateActionItemStatus = async (
     actionItemId,
@@ -159,7 +199,10 @@ export default function MeetingDetails() {
 
       setActionItems(response.data || []);
     } catch (err) {
-      console.error(err);
+      console.error(
+        "Failed to update action item:",
+        err
+      );
 
       setError(
         err.response?.data?.detail ||
@@ -168,40 +211,9 @@ export default function MeetingDetails() {
     }
   };
 
-  const getSentimentPercentage = (value) => {
-    const total =
-      (analytics?.positive || 0) +
-      (analytics?.negative || 0) +
-      (analytics?.neutral || 0);
-
-    if (!total) return 0;
-
-    return Math.round((value / total) * 100);
-  };
-
-  const parseJsonField = (value) => {
-    if (!value) return [];
-
-    if (Array.isArray(value)) {
-      return value;
-    }
-
-    try {
-      const parsed = JSON.parse(value);
-
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  };
-
-  const keyPoints = useMemo(() => {
-    return parseJsonField(meeting?.key_points);
-  }, [meeting]);
-
-  const decisions = useMemo(() => {
-    return parseJsonField(meeting?.decisions);
-  }, [meeting]);
+  // --------------------------------------------------
+  // DERIVED DATA
+  // --------------------------------------------------
 
   const hasTranscript =
     transcript &&
@@ -223,8 +235,9 @@ export default function MeetingDetails() {
   const filteredSegments = useMemo(() => {
     if (!hasTranscript) return [];
 
-    const normalizedSearch =
-      searchQuery.trim().toLowerCase();
+    const query = searchQuery
+      .toLowerCase()
+      .trim();
 
     return transcript.segments.filter((segment) => {
       const text =
@@ -234,8 +247,7 @@ export default function MeetingDetails() {
         segment.speaker || "UNKNOWN";
 
       const matchesSearch =
-        !normalizedSearch ||
-        text.includes(normalizedSearch);
+        !query || text.includes(query);
 
       const matchesSpeaker =
         selectedSpeaker === "ALL" ||
@@ -250,20 +262,73 @@ export default function MeetingDetails() {
     selectedSpeaker,
   ]);
 
-  const completedActionItems = actionItems.filter(
-    (item) => item.status === "completed"
-  ).length;
+  const analytics = useMemo(() => {
+    return {
+      totalWords: meeting?.total_words || 0,
+      speakerCount: meeting?.speaker_count || 0,
+      positive: meeting?.positive_sentiment || 0,
+      negative: meeting?.negative_sentiment || 0,
+      neutral: meeting?.neutral_sentiment || 0,
+    };
+  }, [meeting]);
 
-  const actionCompletionRate = actionItems.length
-    ? Math.round(
-        (completedActionItems / actionItems.length) * 100
-      )
-    : 0;
+  const completedActionItems =
+    actionItems.filter(
+      (item) => item.status === "completed"
+    ).length;
+
+  const actionCompletionRate =
+    actionItems.length > 0
+      ? Math.round(
+          (completedActionItems /
+            actionItems.length) *
+            100
+        )
+      : 0;
+
+  const dominantSpeaker =
+    speakerAnalytics.length > 0
+      ? [...speakerAnalytics].sort(
+          (a, b) =>
+            (b.word_count || 0) -
+            (a.word_count || 0)
+        )[0]
+      : null;
+
+  const getSpeakerPercentage = (wordCount) => {
+    const totalWords = speakerAnalytics.reduce(
+      (total, speaker) =>
+        total + (speaker.word_count || 0),
+      0
+    );
+
+    if (!totalWords) return 0;
+
+    return Math.round(
+      ((wordCount || 0) / totalWords) * 100
+    );
+  };
+
+  const getSentimentPercentage = (value) => {
+    const total =
+      (analytics.positive || 0) +
+      (analytics.negative || 0) +
+      (analytics.neutral || 0);
+
+    if (!total) return 0;
+
+    return Math.round(
+      (value / total) * 100
+    );
+  };
+
+  // --------------------------------------------------
+  // HELPERS
+  // --------------------------------------------------
 
   const formatTimestamp = (seconds) => {
-    const totalSeconds = Math.max(
-      0,
-      Math.floor(Number(seconds) || 0)
+    const totalSeconds = Math.floor(
+      Number(seconds || 0)
     );
 
     const minutes = Math.floor(
@@ -278,6 +343,82 @@ export default function MeetingDetails() {
     ).padStart(2, "0")}`;
   };
 
+  const formatDuration = (seconds) => {
+    if (!seconds) return "Not available";
+
+    const totalSeconds = Number(seconds);
+
+    const hours = Math.floor(
+      totalSeconds / 3600
+    );
+
+    const minutes = Math.floor(
+      (totalSeconds % 3600) / 60
+    );
+
+    const remainingSeconds =
+      Math.floor(totalSeconds % 60);
+
+    if (hours > 0) {
+      return `${hours}h ${minutes}m`;
+    }
+
+    if (minutes > 0) {
+      return `${minutes}m ${remainingSeconds}s`;
+    }
+
+    return `${remainingSeconds}s`;
+  };
+
+  const formatDate = (date) => {
+    if (!date) return "Not available";
+
+    return new Date(date).toLocaleString(
+      "en-IN",
+      {
+        dateStyle: "medium",
+        timeStyle: "short",
+      }
+    );
+  };
+
+  const getStatusClass = (status) => {
+    switch (status) {
+      case "completed":
+        return "bg-green-50 text-green-700 border-green-200";
+
+      case "processing":
+      case "preprocessing":
+      case "audio_ready":
+      case "transcribing":
+      case "diarizing":
+      case "analyzing":
+        return "bg-amber-50 text-amber-700 border-amber-200";
+
+      case "failed":
+      case "transcription_failed":
+      case "diarization_failed":
+      case "analysis_failed":
+        return "bg-red-50 text-red-700 border-red-200";
+
+      default:
+        return "bg-slate-50 text-slate-600 border-slate-200";
+    }
+  };
+
+  const getActionStatusClass = (status) => {
+    switch (status) {
+      case "completed":
+        return "bg-green-50 text-green-700 border-green-200";
+
+      case "in_progress":
+        return "bg-blue-50 text-blue-700 border-blue-200";
+
+      default:
+        return "bg-amber-50 text-amber-700 border-amber-200";
+    }
+  };
+
   const highlightText = (text) => {
     if (!searchQuery.trim()) {
       return text;
@@ -286,272 +427,332 @@ export default function MeetingDetails() {
     const query = searchQuery.trim();
 
     const parts = text.split(
-      new RegExp(`(${escapeRegExp(query)})`, "gi")
+      new RegExp(`(${query})`, "gi")
     );
 
-    return parts.map((part, index) => {
-      if (
-        part.toLowerCase() ===
-        query.toLowerCase()
-      ) {
-        return (
-          <mark
-            key={index}
-            className="bg-yellow-200 text-slate-900 rounded px-0.5"
-          >
-            {part}
-          </mark>
-        );
-      }
-
-      return part;
-    });
-  };
-
-  const escapeRegExp = (value) => {
-    return value.replace(
-      /[.*+?^${}()|[\]\\]/g,
-      "\\$&"
+    return parts.map((part, index) =>
+      part.toLowerCase() ===
+      query.toLowerCase() ? (
+        <mark
+          key={index}
+          className="bg-yellow-200 rounded px-0.5"
+        >
+          {part}
+        </mark>
+      ) : (
+        part
+      )
     );
   };
 
-  const getStatusClass = (status) => {
-    const normalized =
-      status?.toLowerCase();
-
-    if (normalized === "completed") {
-      return "bg-green-100 text-green-700";
-    }
-
-    if (
-      normalized === "processing" ||
-      normalized === "preprocessing" ||
-      normalized === "transcribing" ||
-      normalized === "diarizing" ||
-      normalized === "analyzing"
-    ) {
-      return "bg-blue-100 text-blue-700";
-    }
-
-    if (
-      normalized === "analysis_failed" ||
-      normalized === "diarization_failed"
-    ) {
-      return "bg-red-100 text-red-700";
-    }
-
-    if (normalized === "transcribed") {
-      return "bg-purple-100 text-purple-700";
-    }
-
-    if (normalized === "audio_ready") {
-      return "bg-amber-100 text-amber-700";
-    }
-
-    return "bg-slate-100 text-slate-700";
-  };
-
-  const isCompleted =
-    meeting?.status === "completed";
-
-  const canTranscribe =
-    meeting?.status === "audio_ready";
-
-  const canDiarize =
-    meeting?.status === "transcribed" &&
-    hasTranscript;
-
-  const canAnalyze =
-    meeting?.status === "transcribed" &&
-    hasTranscript;
+  // --------------------------------------------------
+  // LOADING
+  // --------------------------------------------------
 
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <div className="flex items-center gap-3 text-slate-600">
-          <Loader2 className="w-6 h-6 animate-spin" />
-          Loading meeting...
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 className="w-8 h-8 animate-spin text-slate-700" />
+
+          <p className="text-sm text-slate-500">
+            Loading meeting...
+          </p>
         </div>
       </div>
     );
   }
+
+  // --------------------------------------------------
+  // ERROR / NOT FOUND
+  // --------------------------------------------------
 
   if (!meeting) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
-        <div className="bg-white border border-slate-200 rounded-2xl p-8 text-center max-w-md">
-          <XCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
-
-          <h2 className="text-xl font-semibold text-slate-900">
-            Meeting not found
-          </h2>
-
-          <p className="text-slate-500 mt-2">
-            We could not find this meeting.
-          </p>
+      <div className="min-h-screen bg-slate-50">
+        <div className="max-w-5xl mx-auto px-6 py-10">
 
           <button
             onClick={() => navigate("/dashboard")}
-            className="mt-6 px-5 py-2.5 bg-slate-900 text-white rounded-lg hover:bg-slate-800"
+            className="flex items-center gap-2 text-sm text-slate-600 hover:text-slate-900"
           >
+            <ArrowLeft className="w-4 h-4" />
             Back to Dashboard
           </button>
+
+          <div className="mt-10 bg-white border border-red-200 rounded-2xl p-8 text-center">
+
+            <XCircle className="w-10 h-10 text-red-500 mx-auto mb-3" />
+
+            <h2 className="text-xl font-semibold text-slate-900">
+              Meeting not found
+            </h2>
+
+            <p className="text-slate-500 mt-2">
+              {error || "Unable to load this meeting."}
+            </p>
+
+          </div>
         </div>
       </div>
     );
   }
+
+  // --------------------------------------------------
+  // MAIN UI
+  // --------------------------------------------------
 
   return (
     <div className="min-h-screen bg-slate-50">
 
-      {/* Header */}
-      <header className="bg-white border-b border-slate-200 sticky top-0 z-20">
-        <div className="max-w-7xl mx-auto px-6 py-4">
+      {/* HEADER */}
 
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <header className="bg-white border-b border-slate-200">
 
-            <div className="flex items-center gap-4">
+        <div className="max-w-7xl mx-auto px-6 py-5">
+
+          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-5">
+
+            <div>
 
               <button
                 onClick={() =>
                   navigate("/dashboard")
                 }
-                className="p-2 rounded-lg hover:bg-slate-100"
+                className="flex items-center gap-2 text-sm text-slate-500 hover:text-slate-900 mb-4"
               >
-                <ArrowLeft className="w-5 h-5" />
+                <ArrowLeft className="w-4 h-4" />
+                Back to Dashboard
               </button>
 
-              <div>
-                <h1 className="text-xl font-bold text-slate-900">
-                  {meeting.title}
-                </h1>
+              <div className="flex items-start gap-4">
 
-                <div className="flex flex-wrap items-center gap-3 mt-1 text-sm text-slate-500">
+                <div className="p-3 bg-slate-900 rounded-xl">
+                  <FileAudio className="w-6 h-6 text-white" />
+                </div>
 
-                  <span className="flex items-center gap-1">
-                    <FileAudio className="w-4 h-4" />
-                    {meeting.file_name}
-                  </span>
+                <div>
 
-                  {meeting.duration && (
-                    <span>
-                      {formatTimestamp(
+                  <h1 className="text-2xl font-bold text-slate-900">
+                    {meeting.title}
+                  </h1>
+
+                  <div className="flex flex-wrap items-center gap-4 mt-2 text-sm text-slate-500">
+
+                    <span className="flex items-center gap-1.5">
+                      <FileAudio className="w-4 h-4" />
+                      {meeting.file_name}
+                    </span>
+
+                    <span className="flex items-center gap-1.5">
+                      <Clock className="w-4 h-4" />
+                      {formatDuration(
                         meeting.duration
                       )}
                     </span>
-                  )}
 
-                  <span
-                    className={`px-2.5 py-1 rounded-full text-xs font-medium ${getStatusClass(
-                      meeting.status
-                    )}`}
-                  >
-                    {meeting.status}
-                  </span>
+                    <span className="flex items-center gap-1.5">
+                      <CalendarDays className="w-4 h-4" />
+                      {formatDate(
+                        meeting.created_at
+                      )}
+                    </span>
+
+                  </div>
 
                 </div>
+
               </div>
+
+            </div>
+
+
+            <div className="flex items-center gap-3">
+
+              <span
+                className={`px-3 py-2 rounded-lg border text-sm font-medium ${getStatusClass(
+                  meeting.status
+                )}`}
+              >
+                {meeting.status}
+              </span>
+
+              <button
+                onClick={() =>
+                  fetchMeetingData(false)
+                }
+                disabled={refreshing}
+                className="p-2.5 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 disabled:opacity-50"
+                title="Refresh"
+              >
+                <RefreshCw
+                  className={`w-5 h-5 ${
+                    refreshing
+                      ? "animate-spin"
+                      : ""
+                  }`}
+                />
+              </button>
 
             </div>
 
           </div>
 
         </div>
+
       </header>
 
 
       <main className="max-w-7xl mx-auto px-6 py-8">
 
-        {/* Error */}
+        {/* ERROR */}
+
         {error && (
-          <div className="mb-6 bg-red-50 border border-red-200 text-red-700 rounded-xl p-4 flex items-start gap-3">
+          <div className="mb-6 bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 flex items-start gap-3">
+
             <XCircle className="w-5 h-5 mt-0.5 flex-shrink-0" />
 
             <p className="text-sm">
               {error}
             </p>
+
           </div>
         )}
 
 
-        {/* Processing Controls */}
-        <section className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm mb-8">
+        {/* PROCESSING ACTIONS */}
 
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-5">
+        <section className="bg-white border border-slate-200 rounded-2xl p-6 mb-8 shadow-sm">
+
+          <div className="flex items-center gap-3 mb-5">
+
+            <div className="p-3 bg-slate-100 rounded-xl">
+              <Sparkles className="w-5 h-5 text-slate-700" />
+            </div>
 
             <div>
+
               <h2 className="text-lg font-semibold text-slate-900">
                 Meeting Processing
               </h2>
 
-              <p className="text-sm text-slate-500 mt-1">
-                Process your recording through transcription,
-                speaker identification, and AI analysis.
+              <p className="text-sm text-slate-500">
+                Process your recording step by step
               </p>
+
             </div>
 
-
-            <div className="flex flex-wrap gap-3">
-
-              <button
-                onClick={handleTranscribe}
-                disabled={
-                  processing ||
-                  !canTranscribe
-                }
-                className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {processing ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Play className="w-4 h-4" />
-                )}
-
-                Transcribe
-              </button>
+          </div>
 
 
-              <button
-                onClick={handleDiarize}
-                disabled={
-                  processing ||
-                  !canDiarize
-                }
-                className="flex items-center gap-2 px-4 py-2.5 rounded-lg border border-slate-300 text-slate-700 text-sm font-medium hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
+          <div className="flex flex-wrap gap-3">
+
+            <button
+              onClick={handleTranscribe}
+              disabled={
+                transcribing ||
+                !meeting.audio_path ||
+                meeting.status === "transcribing"
+              }
+              className="flex items-center gap-2 px-4 py-2.5 bg-slate-900 text-white rounded-lg hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {transcribing ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <MessageSquareText className="w-4 h-4" />
+              )}
+
+              {transcribing
+                ? "Transcribing..."
+                : "Transcribe"}
+            </button>
+
+
+            <button
+              onClick={handleDiarize}
+              disabled={
+                diarizing ||
+                !hasTranscript ||
+                meeting.status === "diarizing"
+              }
+              className="flex items-center gap-2 px-4 py-2.5 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {diarizing ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
                 <Users className="w-4 h-4" />
-                Identify Speakers
-              </button>
+              )}
+
+              {diarizing
+                ? "Identifying Speakers..."
+                : "Identify Speakers"}
+            </button>
 
 
-              <button
-                onClick={handleAnalyze}
-                disabled={
-                  processing ||
-                  !canAnalyze
-                }
-                className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-purple-600 text-white text-sm font-medium hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {processing ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Sparkles className="w-4 h-4" />
-                )}
+            <button
+              onClick={handleAnalyze}
+              disabled={
+                analyzing ||
+                !hasTranscript ||
+                meeting.status === "analyzing"
+              }
+              className="flex items-center gap-2 px-4 py-2.5 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {analyzing ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Sparkles className="w-4 h-4" />
+              )}
 
-                Analyze with AI
-              </button>
-
-            </div>
+              {analyzing
+                ? "Analyzing..."
+                : "Analyze Meeting"}
+            </button>
 
           </div>
 
         </section>
 
 
-        {/* Meeting Intelligence */}
+        {/* AI SUMMARY */}
+
+        {meeting.summary && (
+          <section className="bg-white border border-slate-200 rounded-2xl p-6 mb-8 shadow-sm">
+
+            <div className="flex items-center gap-3 mb-5">
+
+              <div className="p-3 bg-slate-900 rounded-xl">
+                <Sparkles className="w-5 h-5 text-white" />
+              </div>
+
+              <div>
+
+                <h2 className="text-xl font-semibold text-slate-900">
+                  AI Meeting Summary
+                </h2>
+
+                <p className="text-sm text-slate-500">
+                  Generated from the meeting transcript
+                </p>
+
+              </div>
+
+            </div>
+
+            <p className="text-slate-700 leading-7 whitespace-pre-line">
+              {meeting.summary}
+            </p>
+
+          </section>
+        )}
+
+
+        {/* MEETING INTELLIGENCE */}
+
         <section className="mb-8">
 
           <div className="mb-5">
+
             <h2 className="text-xl font-semibold text-slate-900">
               Meeting Intelligence
             </h2>
@@ -559,24 +760,28 @@ export default function MeetingDetails() {
             <p className="text-sm text-slate-500 mt-1">
               AI-powered insights from your meeting
             </p>
+
           </div>
 
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
 
-            {/* Total Words */}
+            {/* TOTAL WORDS */}
+
             <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
 
               <div className="flex items-center justify-between">
 
                 <div>
+
                   <p className="text-sm text-slate-500">
                     Total Words
                   </p>
 
                   <p className="text-3xl font-bold text-slate-900 mt-2">
-                    {analytics?.totalWords || 0}
+                    {analytics.totalWords}
                   </p>
+
                 </div>
 
                 <div className="p-3 bg-blue-50 rounded-xl">
@@ -588,19 +793,22 @@ export default function MeetingDetails() {
             </div>
 
 
-            {/* Speakers */}
+            {/* SPEAKERS */}
+
             <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
 
               <div className="flex items-center justify-between">
 
                 <div>
+
                   <p className="text-sm text-slate-500">
                     Speakers
                   </p>
 
                   <p className="text-3xl font-bold text-slate-900 mt-2">
-                    {analytics?.speakerCount || 0}
+                    {analytics.speakerCount}
                   </p>
+
                 </div>
 
                 <div className="p-3 bg-purple-50 rounded-xl">
@@ -612,19 +820,22 @@ export default function MeetingDetails() {
             </div>
 
 
-            {/* Positive */}
+            {/* POSITIVE */}
+
             <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
 
               <div className="flex items-center justify-between">
 
                 <div>
+
                   <p className="text-sm text-slate-500">
                     Positive Segments
                   </p>
 
                   <p className="text-3xl font-bold text-slate-900 mt-2">
-                    {analytics?.positive || 0}
+                    {analytics.positive}
                   </p>
+
                 </div>
 
                 <div className="p-3 bg-green-50 rounded-xl">
@@ -636,12 +847,14 @@ export default function MeetingDetails() {
             </div>
 
 
-            {/* Action Items */}
+            {/* ACTION ITEMS */}
+
             <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
 
               <div className="flex items-center justify-between">
 
                 <div>
+
                   <p className="text-sm text-slate-500">
                     Action Items
                   </p>
@@ -649,6 +862,7 @@ export default function MeetingDetails() {
                   <p className="text-3xl font-bold text-slate-900 mt-2">
                     {actionItems.length}
                   </p>
+
                 </div>
 
                 <div className="p-3 bg-amber-50 rounded-xl">
@@ -664,7 +878,8 @@ export default function MeetingDetails() {
         </section>
 
 
-        {/* Sentiment Overview */}
+        {/* SENTIMENT */}
+
         <section className="bg-white border border-slate-200 rounded-2xl p-6 mb-8 shadow-sm">
 
           <div className="flex items-center gap-3 mb-6">
@@ -674,6 +889,7 @@ export default function MeetingDetails() {
             </div>
 
             <div>
+
               <h2 className="text-xl font-semibold text-slate-900">
                 Sentiment Overview
               </h2>
@@ -681,6 +897,7 @@ export default function MeetingDetails() {
               <p className="text-sm text-slate-500">
                 Overall emotional tone of the conversation
               </p>
+
             </div>
 
           </div>
@@ -688,7 +905,8 @@ export default function MeetingDetails() {
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
 
-            {/* Positive */}
+            {/* POSITIVE */}
+
             <div className="border border-green-100 rounded-xl p-5">
 
               <div className="flex justify-between mb-3">
@@ -698,7 +916,7 @@ export default function MeetingDetails() {
                 </span>
 
                 <span className="font-semibold text-green-600">
-                  {analytics?.positive || 0}
+                  {analytics.positive}
                 </span>
 
               </div>
@@ -706,19 +924,19 @@ export default function MeetingDetails() {
               <div className="w-full bg-slate-100 rounded-full h-3">
 
                 <div
-                  className="bg-green-500 h-3 rounded-full transition-all"
+                  className="bg-green-500 h-3 rounded-full transition-all duration-500"
                   style={{
                     width: `${getSentimentPercentage(
-                      analytics?.positive || 0
+                      analytics.positive
                     )}%`,
                   }}
                 />
 
               </div>
 
-              <p className="text-xs text-slate-500 mt-2">
+              <p className="text-xs text-slate-400 mt-2">
                 {getSentimentPercentage(
-                  analytics?.positive || 0
+                  analytics.positive
                 )}
                 %
               </p>
@@ -726,7 +944,8 @@ export default function MeetingDetails() {
             </div>
 
 
-            {/* Negative */}
+            {/* NEGATIVE */}
+
             <div className="border border-red-100 rounded-xl p-5">
 
               <div className="flex justify-between mb-3">
@@ -736,7 +955,7 @@ export default function MeetingDetails() {
                 </span>
 
                 <span className="font-semibold text-red-600">
-                  {analytics?.negative || 0}
+                  {analytics.negative}
                 </span>
 
               </div>
@@ -744,19 +963,19 @@ export default function MeetingDetails() {
               <div className="w-full bg-slate-100 rounded-full h-3">
 
                 <div
-                  className="bg-red-500 h-3 rounded-full transition-all"
+                  className="bg-red-500 h-3 rounded-full transition-all duration-500"
                   style={{
                     width: `${getSentimentPercentage(
-                      analytics?.negative || 0
+                      analytics.negative
                     )}%`,
                   }}
                 />
 
               </div>
 
-              <p className="text-xs text-slate-500 mt-2">
+              <p className="text-xs text-slate-400 mt-2">
                 {getSentimentPercentage(
-                  analytics?.negative || 0
+                  analytics.negative
                 )}
                 %
               </p>
@@ -764,7 +983,8 @@ export default function MeetingDetails() {
             </div>
 
 
-            {/* Neutral */}
+            {/* NEUTRAL */}
+
             <div className="border border-slate-200 rounded-xl p-5">
 
               <div className="flex justify-between mb-3">
@@ -774,7 +994,7 @@ export default function MeetingDetails() {
                 </span>
 
                 <span className="font-semibold text-slate-600">
-                  {analytics?.neutral || 0}
+                  {analytics.neutral}
                 </span>
 
               </div>
@@ -782,19 +1002,19 @@ export default function MeetingDetails() {
               <div className="w-full bg-slate-100 rounded-full h-3">
 
                 <div
-                  className="bg-slate-400 h-3 rounded-full transition-all"
+                  className="bg-slate-400 h-3 rounded-full transition-all duration-500"
                   style={{
                     width: `${getSentimentPercentage(
-                      analytics?.neutral || 0
+                      analytics.neutral
                     )}%`,
                   }}
                 />
 
               </div>
 
-              <p className="text-xs text-slate-500 mt-2">
+              <p className="text-xs text-slate-400 mt-2">
                 {getSentimentPercentage(
-                  analytics?.neutral || 0
+                  analytics.neutral
                 )}
                 %
               </p>
@@ -806,119 +1026,371 @@ export default function MeetingDetails() {
         </section>
 
 
-        {/* AI Summary */}
-        {meeting.summary && (
-          <section className="bg-white border border-slate-200 rounded-2xl p-6 mb-8 shadow-sm">
+        {/* KEY POINTS + DECISIONS */}
 
-            <div className="flex items-center gap-3 mb-5">
+        {(meeting.key_points ||
+          meeting.decisions) && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
 
-              <div className="p-3 bg-purple-50 rounded-xl">
-                <Sparkles className="w-6 h-6 text-purple-600" />
+            {/* KEY POINTS */}
+
+            {meeting.key_points && (
+              <section className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+
+                <div className="flex items-center gap-3 mb-5">
+
+                  <div className="p-3 bg-blue-50 rounded-xl">
+                    <TrendingUp className="w-5 h-5 text-blue-600" />
+                  </div>
+
+                  <h2 className="text-xl font-semibold text-slate-900">
+                    Key Points
+                  </h2>
+
+                </div>
+
+                <div className="space-y-3">
+
+                  {(() => {
+                    try {
+                      const points =
+                        JSON.parse(
+                          meeting.key_points
+                        );
+
+                      if (!Array.isArray(points)) {
+                        return (
+                          <p className="text-slate-600">
+                            {meeting.key_points}
+                          </p>
+                        );
+                      }
+
+                      return points.map(
+                        (point, index) => (
+                          <div
+                            key={index}
+                            className="flex gap-3"
+                          >
+                            <span className="mt-2 w-2 h-2 rounded-full bg-slate-700 flex-shrink-0" />
+
+                            <p className="text-slate-700 leading-6">
+                              {point}
+                            </p>
+                          </div>
+                        )
+                      );
+                    } catch {
+                      return (
+                        <p className="text-slate-600">
+                          {meeting.key_points}
+                        </p>
+                      );
+                    }
+                  })()}
+
+                </div>
+
+              </section>
+            )}
+
+
+            {/* DECISIONS */}
+
+            {meeting.decisions && (
+              <section className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+
+                <div className="flex items-center gap-3 mb-5">
+
+                  <div className="p-3 bg-purple-50 rounded-xl">
+                    <CheckCircle2 className="w-5 h-5 text-purple-600" />
+                  </div>
+
+                  <h2 className="text-xl font-semibold text-slate-900">
+                    Decisions
+                  </h2>
+
+                </div>
+
+                <div className="space-y-3">
+
+                  {(() => {
+                    try {
+                      const decisions =
+                        JSON.parse(
+                          meeting.decisions
+                        );
+
+                      if (!Array.isArray(decisions)) {
+                        return (
+                          <p className="text-slate-600">
+                            {meeting.decisions}
+                          </p>
+                        );
+                      }
+
+                      return decisions.map(
+                        (decision, index) => (
+                          <div
+                            key={index}
+                            className="flex gap-3"
+                          >
+                            <CheckCircle2 className="w-5 h-5 text-purple-600 flex-shrink-0 mt-0.5" />
+
+                            <p className="text-slate-700 leading-6">
+                              {decision}
+                            </p>
+                          </div>
+                        )
+                      );
+                    } catch {
+                      return (
+                        <p className="text-slate-600">
+                          {meeting.decisions}
+                        </p>
+                      );
+                    }
+                  })()}
+
+                </div>
+
+              </section>
+            )}
+
+          </div>
+        )}
+
+
+        {/* SPEAKER INTELLIGENCE */}
+
+        <section className="bg-white border border-slate-200 rounded-2xl p-6 mb-8 shadow-sm">
+
+          <div className="flex items-center justify-between mb-6">
+
+            <div className="flex items-center gap-3">
+
+              <div className="p-3 bg-slate-100 rounded-xl">
+                <Users className="w-6 h-6 text-slate-700" />
               </div>
 
               <div>
+
                 <h2 className="text-xl font-semibold text-slate-900">
-                  AI Summary
+                  Speaker Intelligence
                 </h2>
 
-                <p className="text-sm text-slate-500">
-                  Automatically generated meeting summary
+                <p className="text-sm text-slate-500 mt-1">
+                  Participation and speaking analysis
                 </p>
+
               </div>
 
             </div>
 
-            <p className="text-slate-700 leading-7 whitespace-pre-wrap">
-              {meeting.summary}
-            </p>
 
-          </section>
-        )}
+            {dominantSpeaker && (
+              <div className="hidden sm:flex items-center gap-2 px-4 py-2 bg-slate-100 rounded-xl">
 
+                <span className="text-sm text-slate-500">
+                  Most Active
+                </span>
 
-        {/* Key Points + Decisions */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+                <span className="text-sm font-semibold text-slate-900">
+                  {dominantSpeaker.speaker}
+                </span>
 
-          {/* Key Points */}
-          <section className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
-
-            <h2 className="text-xl font-semibold text-slate-900 mb-5">
-              Key Points
-            </h2>
-
-            {keyPoints.length === 0 ? (
-              <p className="text-slate-500 text-sm">
-                No key points available yet.
-              </p>
-            ) : (
-              <ul className="space-y-3">
-
-                {keyPoints.map(
-                  (point, index) => (
-                    <li
-                      key={index}
-                      className="flex gap-3 text-slate-700"
-                    >
-                      <span className="w-6 h-6 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center text-xs font-semibold flex-shrink-0">
-                        {index + 1}
-                      </span>
-
-                      <span>
-                        {point}
-                      </span>
-                    </li>
-                  )
-                )}
-
-              </ul>
+              </div>
             )}
 
-          </section>
+          </div>
 
 
-          {/* Decisions */}
-          <section className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+          {speakerAnalytics.length === 0 ? (
 
-            <h2 className="text-xl font-semibold text-slate-900 mb-5">
-              Decisions
-            </h2>
+            <div className="text-center py-10">
 
-            {decisions.length === 0 ? (
-              <p className="text-slate-500 text-sm">
-                No decisions available yet.
+              <Users className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+
+              <p className="text-slate-500">
+                Speaker analytics are not available yet.
               </p>
-            ) : (
-              <ul className="space-y-3">
 
-                {decisions.map(
-                  (decision, index) => (
-                    <li
-                      key={index}
-                      className="flex gap-3 text-slate-700"
+              {hasTranscript && (
+                <p className="text-xs text-slate-400 mt-1">
+                  Run speaker identification to generate speaker analytics.
+                </p>
+              )}
+
+            </div>
+
+          ) : (
+
+            <div className="space-y-6">
+
+              {speakerAnalytics.map(
+                (speaker) => {
+
+                  const percentage =
+                    getSpeakerPercentage(
+                      speaker.word_count
+                    );
+
+                  const speakingTime =
+                    Number(
+                      speaker.speaking_time || 0
+                    );
+
+                  const minutes =
+                    Math.floor(
+                      speakingTime / 60
+                    );
+
+                  const seconds =
+                    Math.floor(
+                      speakingTime % 60
+                    );
+
+                  return (
+                    <div
+                      key={speaker.id}
+                      className="border border-slate-200 rounded-xl p-5"
                     >
-                      <CheckCircle2 className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
 
-                      <span>
-                        {decision}
-                      </span>
-                    </li>
-                  )
-                )}
+                      <div className="flex items-center justify-between mb-4">
 
-              </ul>
+                        <div className="flex gap-3 items-center">
+
+                          <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center">
+
+                            <User className="w-5 h-5 text-slate-600" />
+
+                          </div>
+
+                          <div>
+
+                            <p className="font-semibold text-slate-900">
+                              {speaker.speaker}
+                            </p>
+
+                            <p className="text-sm text-slate-500">
+                              {speaker.word_count || 0} words
+                            </p>
+
+                          </div>
+
+                        </div>
+
+
+                        <div className="text-right">
+
+                          <p className="text-xl font-bold text-slate-900">
+                            {percentage}%
+                          </p>
+
+                          <p className="text-xs text-slate-500">
+                            participation
+                          </p>
+
+                        </div>
+
+                      </div>
+
+
+                      <div className="w-full bg-slate-100 rounded-full h-3">
+
+                        <div
+                          className="h-3 rounded-full bg-slate-800 transition-all duration-500"
+                          style={{
+                            width: `${percentage}%`,
+                          }}
+                        />
+
+                      </div>
+
+
+                      <div className="grid grid-cols-2 gap-4 mt-4">
+
+                        <div className="bg-slate-50 rounded-lg p-3">
+
+                          <p className="text-xs text-slate-500">
+                            Speaking Time
+                          </p>
+
+                          <p className="font-semibold text-slate-900 mt-1">
+                            {minutes}m{" "}
+                            {seconds}s
+                          </p>
+
+                        </div>
+
+
+                        <div className="bg-slate-50 rounded-lg p-3">
+
+                          <p className="text-xs text-slate-500">
+                            Word Count
+                          </p>
+
+                          <p className="font-semibold text-slate-900 mt-1">
+                            {speaker.word_count || 0}
+                          </p>
+
+                        </div>
+
+                      </div>
+
+                    </div>
+                  );
+                }
+              )}
+
+            </div>
+
+          )}
+
+
+          {dominantSpeaker &&
+            speakerAnalytics.length > 1 && (
+              <div className="mt-6 p-4 bg-slate-50 border border-slate-200 rounded-xl">
+
+                <div className="flex gap-3">
+
+                  <TrendingUp className="w-5 h-5 text-slate-700 mt-0.5 flex-shrink-0" />
+
+                  <p className="text-sm text-slate-600">
+
+                    <span className="font-semibold text-slate-900">
+                      {dominantSpeaker.speaker}
+                    </span>{" "}
+
+                    had the highest participation with{" "}
+
+                    <span className="font-semibold text-slate-900">
+                      {getSpeakerPercentage(
+                        dominantSpeaker.word_count
+                      )}
+                      %
+                    </span>{" "}
+
+                    of the meeting's spoken words.
+
+                  </p>
+
+                </div>
+
+              </div>
             )}
 
-          </section>
-
-        </div>
+        </section>
 
 
-        {/* Action Items */}
+        {/* ACTION ITEMS */}
+
         <section className="bg-white border border-slate-200 rounded-2xl p-6 mb-8 shadow-sm">
 
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
+          <div className="flex items-center justify-between mb-6">
 
             <div>
+
               <h2 className="text-xl font-semibold text-slate-900">
                 Action Items
               </h2>
@@ -926,18 +1398,20 @@ export default function MeetingDetails() {
               <p className="text-sm text-slate-500 mt-1">
                 Tasks identified from the meeting
               </p>
+
             </div>
 
-            <div className="flex items-center gap-4 text-sm">
 
-              <span className="text-slate-500">
+            <div className="text-right">
+
+              <p className="text-sm text-slate-500">
                 {actionItems.length} tasks
-              </span>
+              </p>
 
               {actionItems.length > 0 && (
-                <span className="font-medium text-green-600">
+                <p className="text-sm font-medium text-slate-700 mt-1">
                   {actionCompletionRate}% completed
-                </span>
+                </p>
               )}
 
             </div>
@@ -946,6 +1420,7 @@ export default function MeetingDetails() {
 
 
           {actionItems.length === 0 ? (
+
             <div className="text-center py-10">
 
               <CheckCircle2 className="w-10 h-10 text-slate-300 mx-auto mb-3" />
@@ -954,8 +1429,16 @@ export default function MeetingDetails() {
                 No action items found.
               </p>
 
+              {meeting.summary && (
+                <p className="text-xs text-slate-400 mt-1">
+                  AI analysis did not identify any action items.
+                </p>
+              )}
+
             </div>
+
           ) : (
+
             <div className="space-y-4">
 
               {actionItems.map((item) => (
@@ -965,16 +1448,17 @@ export default function MeetingDetails() {
                   className="border border-slate-200 rounded-xl p-4 hover:shadow-sm transition"
                 >
 
-                  <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+                  <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
 
                     <div className="flex gap-3">
 
                       <div className="mt-1">
 
-                        {item.status === "completed" ? (
+                        {item.status ===
+                        "completed" ? (
                           <CheckCircle2 className="w-5 h-5 text-green-600" />
                         ) : (
-                          <Clock3 className="w-5 h-5 text-amber-500" />
+                          <Clock className="w-5 h-5 text-amber-500" />
                         )}
 
                       </div>
@@ -984,7 +1468,8 @@ export default function MeetingDetails() {
 
                         <p
                           className={`font-medium ${
-                            item.status === "completed"
+                            item.status ===
+                            "completed"
                               ? "line-through text-slate-400"
                               : "text-slate-900"
                           }`}
@@ -1001,7 +1486,6 @@ export default function MeetingDetails() {
                               "Unknown"}
                           </span>
 
-
                           <span className="flex items-center gap-1">
                             <CalendarDays className="w-4 h-4" />
                             {item.deadline ||
@@ -1015,33 +1499,60 @@ export default function MeetingDetails() {
                     </div>
 
 
-                    <select
-                      value={
-                        item.status ||
-                        "pending"
-                      }
-                      onChange={(e) =>
-                        updateActionItemStatus(
-                          item.id,
-                          e.target.value
-                        )
-                      }
-                      className="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-slate-200"
-                    >
+                    <div className="flex items-center gap-3">
 
-                      <option value="pending">
-                        Pending
-                      </option>
+                      <span
+                        className={`hidden sm:block px-2.5 py-1 rounded-lg border text-xs font-medium ${getActionStatusClass(
+                          item.status
+                        )}`}
+                      >
+                        {item.status ===
+                        "in_progress"
+                          ? "In Progress"
+                          : item.status
+                            ? item.status
+                                .charAt(0)
+                                .toUpperCase() +
+                              item.status.slice(1)
+                            : "Pending"}
+                      </span>
 
-                      <option value="in_progress">
-                        In Progress
-                      </option>
 
-                      <option value="completed">
-                        Completed
-                      </option>
+                      <div className="relative">
 
-                    </select>
+                        <select
+                          value={
+                            item.status ||
+                            "pending"
+                          }
+                          onChange={(e) =>
+                            updateActionItemStatus(
+                              item.id,
+                              e.target.value
+                            )
+                          }
+                          className="appearance-none border border-slate-300 rounded-lg pl-3 pr-8 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-slate-200"
+                        >
+
+                          <option value="pending">
+                            Pending
+                          </option>
+
+                          <option value="in_progress">
+                            In Progress
+                          </option>
+
+                          <option value="completed">
+                            Completed
+                          </option>
+
+                        </select>
+
+                        <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+
+                      </div>
+
+                    </div>
 
                   </div>
 
@@ -1050,125 +1561,15 @@ export default function MeetingDetails() {
               ))}
 
             </div>
+
           )}
 
         </section>
 
 
-        {/* Speaker Analytics */}
-        {meeting.speaker_analytics &&
-          Array.isArray(
-            meeting.speaker_analytics
-          ) &&
-          meeting.speaker_analytics.length > 0 && (
+        {/* TRANSCRIPT */}
 
-          <section className="bg-white border border-slate-200 rounded-2xl p-6 mb-8 shadow-sm">
-
-            <div className="flex items-center gap-3 mb-6">
-
-              <div className="p-3 bg-purple-50 rounded-xl">
-                <Users className="w-6 h-6 text-purple-600" />
-              </div>
-
-              <div>
-                <h2 className="text-xl font-semibold text-slate-900">
-                  Speaker Analytics
-                </h2>
-
-                <p className="text-sm text-slate-500">
-                  Participation and speaking distribution
-                </p>
-              </div>
-
-            </div>
-
-
-            <div className="space-y-4">
-
-              {meeting.speaker_analytics.map(
-                (speaker, index) => {
-
-                  const percentage =
-                    speaker.percentage ||
-                    speaker.speaking_percentage ||
-                    0;
-
-                  return (
-                    <div
-                      key={index}
-                      className="border border-slate-200 rounded-xl p-4"
-                    >
-
-                      <div className="flex items-center justify-between mb-3">
-
-                        <div className="flex items-center gap-3">
-
-                          <div className="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center">
-                            <User className="w-4 h-4 text-slate-600" />
-                          </div>
-
-                          <div>
-
-                            <p className="font-medium text-slate-900">
-                              {speaker.speaker ||
-                                "Unknown Speaker"}
-                            </p>
-
-                            <p className="text-xs text-slate-500">
-                              {speaker.word_count ||
-                                0}{" "}
-                              words
-                            </p>
-
-                          </div>
-
-                        </div>
-
-
-                        <span className="font-semibold text-slate-700">
-                          {percentage}%
-                        </span>
-
-                      </div>
-
-
-                      <div className="w-full bg-slate-100 rounded-full h-2.5">
-
-                        <div
-                          className="bg-purple-500 h-2.5 rounded-full"
-                          style={{
-                            width: `${Math.min(
-                              100,
-                              percentage
-                            )}%`,
-                          }}
-                        />
-
-                      </div>
-
-
-                      {speaker.speaking_time != null && (
-                        <p className="text-xs text-slate-500 mt-2">
-                          Speaking time:{" "}
-                          {formatTimestamp(
-                            speaker.speaking_time
-                          )}
-                        </p>
-                      )}
-
-                    </div>
-                  );
-                }
-              )}
-
-            </div>
-
-          </section>
-        )}
-
-
-        {/* Transcript */}
-        <section className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+        <section className="bg-white border border-slate-200 rounded-2xl shadow-sm">
 
           <div className="p-6 border-b border-slate-200">
 
@@ -1181,7 +1582,7 @@ export default function MeetingDetails() {
                 </h2>
 
                 <p className="text-sm text-slate-500 mt-1">
-                  Search and filter the conversation
+                  Search and filter the meeting conversation
                 </p>
 
               </div>
@@ -1190,9 +1591,13 @@ export default function MeetingDetails() {
               {hasTranscript && (
                 <div className="text-sm text-slate-500">
                   Showing{" "}
-                  {filteredSegments.length}{" "}
+                  <span className="font-medium text-slate-900">
+                    {filteredSegments.length}
+                  </span>{" "}
                   of{" "}
-                  {transcript.segments.length}{" "}
+                  <span className="font-medium text-slate-900">
+                    {transcript.segments.length}
+                  </span>{" "}
                   segments
                 </div>
               )}
@@ -1201,10 +1606,11 @@ export default function MeetingDetails() {
 
 
             {hasTranscript && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-5">
+              <div className="flex flex-col md:flex-row gap-3 mt-5">
 
-                {/* Search */}
-                <div className="relative">
+                {/* SEARCH */}
+
+                <div className="relative flex-1">
 
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
 
@@ -1223,33 +1629,40 @@ export default function MeetingDetails() {
                 </div>
 
 
-                {/* Speaker Filter */}
-                <select
-                  value={selectedSpeaker}
-                  onChange={(e) =>
-                    setSelectedSpeaker(
-                      e.target.value
-                    )
-                  }
-                  className="w-full px-4 py-2.5 border border-slate-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-slate-200"
-                >
+                {/* SPEAKER FILTER */}
 
-                  <option value="ALL">
-                    All Speakers
-                  </option>
+                <div className="relative">
 
-                  {speakers.map(
-                    (speaker) => (
-                      <option
-                        key={speaker}
-                        value={speaker}
-                      >
-                        {speaker}
-                      </option>
-                    )
-                  )}
+                  <select
+                    value={selectedSpeaker}
+                    onChange={(e) =>
+                      setSelectedSpeaker(
+                        e.target.value
+                      )
+                    }
+                    className="appearance-none w-full md:w-52 border border-slate-300 rounded-lg pl-4 pr-9 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  >
 
-                </select>
+                    <option value="ALL">
+                      All Speakers
+                    </option>
+
+                    {speakers.map(
+                      (speaker) => (
+                        <option
+                          key={speaker}
+                          value={speaker}
+                        >
+                          {speaker}
+                        </option>
+                      )
+                    )}
+
+                  </select>
+
+                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+
+                </div>
 
               </div>
             )}
@@ -1263,14 +1676,32 @@ export default function MeetingDetails() {
 
               <MessageSquareText className="w-12 h-12 text-slate-300 mx-auto mb-4" />
 
-              <h3 className="text-lg font-medium text-slate-700">
-                Transcript not available
+              <h3 className="text-lg font-semibold text-slate-900">
+                No transcript available
               </h3>
 
-              <p className="text-sm text-slate-500 mt-2 max-w-md mx-auto">
-                Transcribe the meeting first to generate
-                a searchable transcript.
+              <p className="text-sm text-slate-500 mt-2 mb-5">
+                Transcribe the meeting audio to see the conversation here.
               </p>
+
+              <button
+                onClick={handleTranscribe}
+                disabled={
+                  transcribing ||
+                  !meeting.audio_path
+                }
+                className="inline-flex items-center gap-2 px-4 py-2.5 bg-slate-900 text-white rounded-lg hover:bg-slate-800 disabled:opacity-50"
+              >
+                {transcribing ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <MessageSquareText className="w-4 h-4" />
+                )}
+
+                {transcribing
+                  ? "Transcribing..."
+                  : "Transcribe Meeting"}
+              </button>
 
             </div>
 
@@ -1278,15 +1709,25 @@ export default function MeetingDetails() {
 
             <div className="p-12 text-center">
 
-              <Search className="w-10 h-10 text-slate-300 mx-auto mb-4" />
+              <Search className="w-10 h-10 text-slate-300 mx-auto mb-3" />
 
-              <h3 className="text-lg font-medium text-slate-700">
-                No matching segments
+              <h3 className="font-semibold text-slate-900">
+                No matching transcript
               </h3>
 
-              <p className="text-sm text-slate-500 mt-2">
-                Try changing your search or speaker filter.
+              <p className="text-sm text-slate-500 mt-1">
+                Try a different search term or speaker.
               </p>
+
+              <button
+                onClick={() => {
+                  setSearchQuery("");
+                  setSelectedSpeaker("ALL");
+                }}
+                className="mt-4 text-sm font-medium text-slate-700 hover:text-slate-900 underline"
+              >
+                Clear filters
+              </button>
 
             </div>
 
@@ -1307,38 +1748,36 @@ export default function MeetingDetails() {
                       className="p-5 hover:bg-slate-50 transition"
                     >
 
-                      <div className="flex items-start gap-4">
+                      <div className="flex gap-4">
 
-                        {/* Timestamp */}
-                        <button
-                          type="button"
-                          className="flex-shrink-0 text-xs font-mono text-blue-600 bg-blue-50 px-2.5 py-1.5 rounded-lg hover:bg-blue-100"
-                          title="Timestamp"
-                        >
-                          {formatTimestamp(
-                            segment.start
-                          )}
-                        </button>
+                        {/* TIMESTAMP */}
+
+                        <div className="flex-shrink-0">
+
+                          <button
+                            className="px-2.5 py-1 bg-slate-100 text-slate-600 rounded-md text-xs font-mono hover:bg-slate-200"
+                            title="Transcript timestamp"
+                          >
+                            {formatTimestamp(
+                              segment.start
+                            )}
+                          </button>
+
+                        </div>
 
 
-                        <div className="min-w-0 flex-1">
+                        {/* CONTENT */}
 
-                          <div className="flex flex-wrap items-center gap-2 mb-2">
+                        <div className="flex-1 min-w-0">
 
-                            <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-700 bg-slate-100 px-2.5 py-1 rounded-full">
+                          <div className="flex items-center gap-2 mb-1.5">
 
-                              <User className="w-3.5 h-3.5" />
-
+                            <span className="text-sm font-semibold text-slate-900">
                               {speaker}
-
                             </span>
 
                             {segment.end != null && (
                               <span className="text-xs text-slate-400">
-                                {formatTimestamp(
-                                  segment.start
-                                )}{" "}
-                                –{" "}
                                 {formatTimestamp(
                                   segment.end
                                 )}
@@ -1346,7 +1785,6 @@ export default function MeetingDetails() {
                             )}
 
                           </div>
-
 
                           <p className="text-slate-700 leading-7">
                             {highlightText(
@@ -1370,8 +1808,22 @@ export default function MeetingDetails() {
         </section>
 
 
-        {/* Footer spacing */}
-        <div className="h-10" />
+        {/* RAW TRANSCRIPT FALLBACK */}
+
+        {!hasTranscript &&
+          transcript?.content && (
+            <section className="bg-white border border-slate-200 rounded-2xl p-6 mt-8 shadow-sm">
+
+              <h2 className="text-lg font-semibold text-slate-900 mb-4">
+                Transcript Text
+              </h2>
+
+              <p className="whitespace-pre-line text-slate-700 leading-7">
+                {transcript.content}
+              </p>
+
+            </section>
+          )}
 
       </main>
 

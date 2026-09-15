@@ -1,65 +1,181 @@
 def calculate_overlap(
-    start_a,
-    end_a,
-    start_b,
-    end_b
-):
-    overlap_start = max(start_a, start_b)
-    overlap_end = min(end_a, end_b)
+    transcript_start: float,
+    transcript_end: float,
+    speaker_start: float,
+    speaker_end: float,
+) -> float:
+    """
+    Calculate the amount of time two segments overlap.
+    """
+
+    overlap_start = max(
+        transcript_start,
+        speaker_start,
+    )
+
+    overlap_end = min(
+        transcript_end,
+        speaker_end,
+    )
 
     return max(
         0.0,
-        overlap_end - overlap_start
+        overlap_end - overlap_start,
     )
 
 
-def assign_speakers(
+def merge_transcript_with_speakers(
     transcript_segments,
-    speaker_segments
+    speaker_segments,
 ):
-    result = []
+    """
+    Assign the most likely speaker to every
+    Whisper transcript segment.
 
-    for transcript in transcript_segments:
+    transcript_segments:
+        [
+            {
+                "start": 0.0,
+                "end": 3.5,
+                "text": "Hello everyone"
+            }
+        ]
+
+    speaker_segments:
+        [
+            {
+                "start": 0.0,
+                "end": 4.0,
+                "speaker": "SPEAKER_00"
+            }
+        ]
+
+    Returns:
+        [
+            {
+                "start": 0.0,
+                "end": 3.5,
+                "text": "Hello everyone",
+                "speaker": "SPEAKER_00"
+            }
+        ]
+    """
+
+    if not transcript_segments:
+        return []
+
+    if not speaker_segments:
+        return [
+            {
+                **segment,
+                "speaker": "UNKNOWN",
+            }
+            for segment in transcript_segments
+        ]
+
+    merged_segments = []
+
+    for transcript_segment in transcript_segments:
 
         transcript_start = float(
-            transcript.get("start", 0)
+            transcript_segment.get(
+                "start",
+                0,
+            )
+            or 0
         )
 
         transcript_end = float(
-            transcript.get("end", 0)
+            transcript_segment.get(
+                "end",
+                transcript_start,
+            )
+            or transcript_start
         )
 
         best_speaker = "UNKNOWN"
         best_overlap = 0.0
 
-        for speaker in speaker_segments:
+        # --------------------------------------------------------
+        # FIND SPEAKER WITH MAXIMUM OVERLAP
+        # --------------------------------------------------------
+
+        for speaker_segment in speaker_segments:
 
             speaker_start = float(
-                speaker.get("start", 0)
+                speaker_segment.get(
+                    "start",
+                    0,
+                )
+                or 0
             )
 
             speaker_end = float(
-                speaker.get("end", 0)
+                speaker_segment.get(
+                    "end",
+                    speaker_start,
+                )
+                or speaker_start
+            )
+
+            speaker = speaker_segment.get(
+                "speaker",
+                "UNKNOWN",
             )
 
             overlap = calculate_overlap(
                 transcript_start,
                 transcript_end,
                 speaker_start,
-                speaker_end
+                speaker_end,
             )
 
             if overlap > best_overlap:
                 best_overlap = overlap
-                best_speaker = speaker.get(
-                    "speaker",
-                    "UNKNOWN"
+                best_speaker = speaker
+
+        # --------------------------------------------------------
+        # CREATE MERGED SEGMENT
+        # --------------------------------------------------------
+
+        merged_segment = {
+            "start": round(
+                transcript_start,
+                2,
+            ),
+            "end": round(
+                transcript_end,
+                2,
+            ),
+            "text": str(
+                transcript_segment.get(
+                    "text",
+                    "",
                 )
+            ).strip(),
+            "speaker": best_speaker,
+        }
 
-        result.append({
-            **transcript,
-            "speaker": best_speaker
-        })
+        merged_segments.append(
+            merged_segment
+        )
 
-    return result
+    return merged_segments
+
+
+def merge_transcript(
+    transcript_segments,
+    speaker_segments,
+):
+    """
+    Backward-compatible alias.
+
+    This allows older code that uses
+    merge_transcript() to continue working.
+    """
+
+    return merge_transcript_with_speakers(
+        transcript_segments,
+        speaker_segments,
+    )
 

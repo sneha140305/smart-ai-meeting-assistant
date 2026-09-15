@@ -1,115 +1,226 @@
+import json
 from collections import defaultdict
 
 from app.services.sentiment import analyze_sentiment
 
 
-def calculate_meeting_analytics(transcript_segments):
+def calculate_meeting_analytics(segments):
+    """
+    Calculate meeting-level and speaker-level analytics.
 
-    speaker_data = defaultdict(
-        lambda: {
-            "speaking_time": 0.0,
-            "word_count": 0
+    Input:
+        segments = [
+            {
+                "start": 0.0,
+                "end": 4.2,
+                "text": "Hello everyone",
+                "speaker": "SPEAKER_00"
+            },
+            ...
+        ]
+
+    Returns:
+        {
+            "total_words": int,
+            "speaker_count": int,
+            "positive_sentiment": int,
+            "negative_sentiment": int,
+            "neutral_sentiment": int,
+            "speaker_analytics": [...]
         }
-    )
+    """
 
-    sentiment_counts = {
-        "positive": 0,
-        "negative": 0,
-        "neutral": 0
-    }
+    if not segments:
+        return {
+            "total_words": 0,
+            "speaker_count": 0,
+            "positive_sentiment": 0,
+            "negative_sentiment": 0,
+            "neutral_sentiment": 0,
+            "speaker_analytics": [],
+        }
+
+    # ============================================================
+    # BASIC COUNTERS
+    # ============================================================
 
     total_words = 0
 
-    for segment in transcript_segments:
+    positive_sentiment = 0
+    negative_sentiment = 0
+    neutral_sentiment = 0
 
-        text = segment.get(
-            "text",
-            ""
+    # Speaker information
+    speaker_stats = defaultdict(
+        lambda: {
+            "speaking_time": 0.0,
+            "word_count": 0,
+        }
+    )
+
+    # ============================================================
+    # PROCESS SEGMENTS
+    # ============================================================
+
+    for segment in segments:
+
+        if not isinstance(segment, dict):
+            continue
+
+        text = str(
+            segment.get("text", "")
         ).strip()
 
-        speaker = segment.get(
-            "speaker",
-            "UNKNOWN"
-        )
+        if not text:
+            continue
 
-        start = float(
-            segment.get("start", 0)
-        )
+        # --------------------------------------------------------
+        # WORD COUNT
+        # --------------------------------------------------------
 
-        end = float(
-            segment.get("end", 0)
-        )
-
-        speaking_time = max(
-            0,
-            end - start
-        )
-
-        word_count = len(
-            text.split()
-        )
-
-        # Speaker statistics
-        speaker_data[speaker][
-            "speaking_time"
-        ] += speaking_time
-
-        speaker_data[speaker][
-            "word_count"
-        ] += word_count
+        words = text.split()
+        word_count = len(words)
 
         total_words += word_count
 
-        # Sentiment
-        sentiment = analyze_sentiment(text)
+        # --------------------------------------------------------
+        # SPEAKER
+        # --------------------------------------------------------
 
-        label = sentiment["label"]
-
-        if label in sentiment_counts:
-            sentiment_counts[label] += 1
-
-    # Prepare speaker results
-    speakers = {}
-
-    for speaker, data in speaker_data.items():
-
-        speaking_percentage = 0
-
-        if total_words > 0:
-            speaking_percentage = (
-                data["word_count"]
-                / total_words
-            ) * 100
-
-        speakers[speaker] = {
-            "speaking_time": round(
-                data["speaking_time"],
-                2
-            ),
-            "word_count": data["word_count"],
-            "speaking_percentage": round(
-                speaking_percentage,
-                2
-            )
-        }
-
-    # Meeting duration
-    duration_seconds = 0
-
-    if transcript_segments:
-
-        duration_seconds = max(
-            float(segment.get("end", 0))
-            for segment in transcript_segments
+        speaker = (
+            segment.get("speaker")
+            or "UNKNOWN"
         )
 
+        speaker = str(speaker)
+
+        # --------------------------------------------------------
+        # SPEAKING TIME
+        # --------------------------------------------------------
+
+        try:
+            start = float(
+                segment.get("start", 0)
+                or 0
+            )
+
+            end = float(
+                segment.get("end", 0)
+                or 0
+            )
+
+            duration = max(
+                0.0,
+                end - start
+            )
+
+        except (
+            TypeError,
+            ValueError,
+        ):
+            duration = 0.0
+
+        speaker_stats[speaker][
+            "speaking_time"
+        ] += duration
+
+        speaker_stats[speaker][
+            "word_count"
+        ] += word_count
+
+        # --------------------------------------------------------
+        # SENTIMENT
+        # --------------------------------------------------------
+
+        try:
+            sentiment = analyze_sentiment(
+                text
+            )
+
+            label = str(
+                sentiment.get(
+                    "label",
+                    "neutral"
+                )
+            ).lower()
+
+            if label == "positive":
+                positive_sentiment += 1
+
+            elif label == "negative":
+                negative_sentiment += 1
+
+            else:
+                neutral_sentiment += 1
+
+        except Exception as error:
+            # Sentiment failure should not
+            # break the complete meeting analysis.
+            print(
+                f"Sentiment analysis failed: {error}"
+            )
+
+            neutral_sentiment += 1
+
+    # ============================================================
+    # SPEAKER COUNT
+    # ============================================================
+
+    speaker_count = len(
+        speaker_stats
+    )
+
+    # ============================================================
+    # SPEAKER ANALYTICS
+    # ============================================================
+
+    speaker_analytics = []
+
+    for speaker, stats in speaker_stats.items():
+
+        speaker_analytics.append(
+            {
+                "speaker": speaker,
+                "speaking_time": round(
+                    stats["speaking_time"],
+                    2
+                ),
+                "word_count": stats[
+                    "word_count"
+                ],
+            }
+        )
+
+    # Sort most active speakers first
+    speaker_analytics.sort(
+        key=lambda item: item[
+            "word_count"
+        ],
+        reverse=True,
+    )
+
+    # ============================================================
+    # RETURN RESULT
+    # ============================================================
+
     return {
-        "duration_seconds": round(
-            duration_seconds,
-            2
-        ),
         "total_words": total_words,
-        "speaker_count": len(speaker_data),
-        "speakers": speakers,
-        "sentiment": sentiment_counts
+
+        "speaker_count": speaker_count,
+
+        "positive_sentiment": (
+            positive_sentiment
+        ),
+
+        "negative_sentiment": (
+            negative_sentiment
+        ),
+
+        "neutral_sentiment": (
+            neutral_sentiment
+        ),
+
+        "speaker_analytics": (
+            speaker_analytics
+        ),
     }
