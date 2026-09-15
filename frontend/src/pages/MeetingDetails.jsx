@@ -1,28 +1,30 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import api from "../services/api";
 
 import {
   ArrowLeft,
   BarChart3,
   CalendarDays,
   CheckCircle2,
-  ChevronDown,
-  Clock,
-  FileAudio,
+  Clock3,
+  FileText,
   Loader2,
   MessageSquareText,
-  RefreshCw,
+  Play,
   Search,
-  Smile,
   Sparkles,
   TrendingUp,
   User,
   Users,
-  XCircle,
+  Video,
+  AlertCircle,
+  RefreshCw,
 } from "lucide-react";
 
-export default function MeetingDetails() {
+import api from "../services/api";
+
+
+function MeetingDetails() {
   const { meetingId } = useParams();
   const navigate = useNavigate();
 
@@ -31,269 +33,156 @@ export default function MeetingDetails() {
   const [actionItems, setActionItems] = useState([]);
   const [speakerAnalytics, setSpeakerAnalytics] = useState([]);
 
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const [analytics, setAnalytics] = useState(null);
+  const [meetingScore, setMeetingScore] = useState(null);
 
-  const [transcribing, setTranscribing] = useState(false);
-  const [diarizing, setDiarizing] = useState(false);
-  const [analyzing, setAnalyzing] = useState(false);
+  const [insights, setInsights] = useState([]);
+  const [recommendations, setRecommendations] = useState([]);
+
+  const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState(false);
+
+  const [processing, setProcessing] = useState(false);
+  const [processingStep, setProcessingStep] = useState("");
 
   const [error, setError] = useState("");
 
-  // Transcript controls
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedSpeaker, setSelectedSpeaker] = useState("ALL");
 
-  // --------------------------------------------------
-  // FETCH MEETING DATA
-  // --------------------------------------------------
+  const [updatingActionId, setUpdatingActionId] = useState(null);
 
-  const fetchMeetingData = async (showLoader = true) => {
+
+  // ---------------------------------------------
+  // Helpers
+  // ---------------------------------------------
+
+  const parseJson = (value, fallback = []) => {
+    if (!value) return fallback;
+
+    if (Array.isArray(value)) {
+      return value;
+    }
+
     try {
-      if (showLoader) {
-        setLoading(true);
-      } else {
-        setRefreshing(true);
+      const parsed = JSON.parse(value);
+
+      return parsed ?? fallback;
+    } catch {
+      return fallback;
+    }
+  };
+
+
+  const formatTimestamp = (seconds) => {
+    const totalSeconds = Math.max(
+      0,
+      Math.floor(Number(seconds) || 0)
+    );
+
+    const minutes = Math.floor(totalSeconds / 60);
+    const remainingSeconds = totalSeconds % 60;
+
+    return `${minutes}:${String(
+      remainingSeconds
+    ).padStart(2, "0")}`;
+  };
+
+
+  const formatDate = (dateString) => {
+    if (!dateString) return "Unknown date";
+
+    return new Date(dateString).toLocaleString(
+      "en-IN",
+      {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
       }
-
-      setError("");
-
-      const [
-        meetingResponse,
-        transcriptResponse,
-        actionItemsResponse,
-        speakerResponse,
-      ] = await Promise.all([
-        api.get(`/meetings/${meetingId}`),
-
-        api
-          .get(`/meetings/${meetingId}/transcript`)
-          .catch(() => ({ data: null })),
-
-        api
-          .get(`/meetings/${meetingId}/action-items`)
-          .catch(() => ({ data: [] })),
-
-        api
-          .get(`/meetings/${meetingId}/speaker-analytics`)
-          .catch(() => ({ data: [] })),
-      ]);
-
-      setMeeting(meetingResponse.data);
-      setTranscript(transcriptResponse.data);
-      setActionItems(actionItemsResponse.data || []);
-      setSpeakerAnalytics(speakerResponse.data || []);
-    } catch (err) {
-      console.error("Failed to fetch meeting:", err);
-
-      setError(
-        err.response?.data?.detail ||
-          "Failed to load meeting details."
-      );
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
+    );
   };
 
-  useEffect(() => {
-    fetchMeetingData(true);
-  }, [meetingId]);
 
-  // --------------------------------------------------
-  // TRANSCRIBE
-  // --------------------------------------------------
+  const formatDuration = (duration) => {
+    if (!duration) return "Unavailable";
 
-  const handleTranscribe = async () => {
-    try {
-      setTranscribing(true);
-      setError("");
+    const totalSeconds = Number(duration);
 
-      await api.post(`/meetings/${meetingId}/transcribe`);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor(
+      (totalSeconds % 3600) / 60
+    );
+    const seconds = totalSeconds % 60;
 
-      await fetchMeetingData(false);
-    } catch (err) {
-      console.error("Transcription failed:", err);
-
-      setError(
-        err.response?.data?.detail ||
-          "Transcription failed. Please try again."
-      );
-    } finally {
-      setTranscribing(false);
+    if (hours > 0) {
+      return `${hours}h ${minutes}m ${seconds}s`;
     }
+
+    return `${minutes}m ${seconds}s`;
   };
 
-  // --------------------------------------------------
-  // DIARIZE
-  // --------------------------------------------------
 
-  const handleDiarize = async () => {
-    try {
-      setDiarizing(true);
-      setError("");
-
-      await api.post(`/meetings/${meetingId}/diarize`);
-
-      await fetchMeetingData(false);
-    } catch (err) {
-      console.error("Diarization failed:", err);
-
-      setError(
-        err.response?.data?.detail ||
-          "Speaker diarization failed. Please try again."
-      );
-    } finally {
-      setDiarizing(false);
-    }
-  };
-
-  // --------------------------------------------------
-  // AI ANALYSIS
-  // --------------------------------------------------
-
-  const handleAnalyze = async () => {
-    try {
-      setAnalyzing(true);
-      setError("");
-
-      await api.post(`/meetings/${meetingId}/analyze`);
-
-      await fetchMeetingData(false);
-    } catch (err) {
-      console.error("Analysis failed:", err);
-
-      setError(
-        err.response?.data?.detail ||
-          "AI analysis failed. Please try again."
-      );
-    } finally {
-      setAnalyzing(false);
-    }
-  };
-
-  // --------------------------------------------------
-  // ACTION ITEM STATUS
-  // --------------------------------------------------
-
-  const updateActionItemStatus = async (
-    actionItemId,
-    status
-  ) => {
-    try {
-      setError("");
-
-      await api.patch(
-        `/meetings/${meetingId}/action-items/${actionItemId}`,
-        null,
-        {
-          params: {
-            status,
-          },
-        }
-      );
-
-      const response = await api.get(
-        `/meetings/${meetingId}/action-items`
-      );
-
-      setActionItems(response.data || []);
-    } catch (err) {
-      console.error(
-        "Failed to update action item:",
-        err
-      );
-
-      setError(
-        err.response?.data?.detail ||
-          "Failed to update action item."
-      );
-    }
-  };
-
-  // --------------------------------------------------
-  // DERIVED DATA
-  // --------------------------------------------------
-
-  const hasTranscript =
-    transcript &&
-    Array.isArray(transcript.segments) &&
-    transcript.segments.length > 0;
-
-  const speakers = useMemo(() => {
-    if (!hasTranscript) return [];
-
-    return [
-      ...new Set(
-        transcript.segments.map(
-          (segment) => segment.speaker || "UNKNOWN"
-        )
-      ),
-    ];
-  }, [transcript, hasTranscript]);
-
-  const filteredSegments = useMemo(() => {
-    if (!hasTranscript) return [];
-
-    const query = searchQuery
-      .toLowerCase()
-      .trim();
-
-    return transcript.segments.filter((segment) => {
-      const text =
-        segment.text?.toLowerCase() || "";
-
-      const speaker =
-        segment.speaker || "UNKNOWN";
-
-      const matchesSearch =
-        !query || text.includes(query);
-
-      const matchesSpeaker =
-        selectedSpeaker === "ALL" ||
-        speaker === selectedSpeaker;
-
-      return matchesSearch && matchesSpeaker;
-    });
-  }, [
-    transcript,
-    hasTranscript,
-    searchQuery,
-    selectedSpeaker,
-  ]);
-
-  const analytics = useMemo(() => {
-    return {
-      totalWords: meeting?.total_words || 0,
-      speakerCount: meeting?.speaker_count || 0,
-      positive: meeting?.positive_sentiment || 0,
-      negative: meeting?.negative_sentiment || 0,
-      neutral: meeting?.neutral_sentiment || 0,
+  const getStatusLabel = (status) => {
+    const labels = {
+      completed: "Completed",
+      processing: "Processing",
+      preprocessing: "Preparing",
+      audio_ready: "Audio Ready",
+      transcribing: "Transcribing",
+      diarizing: "Identifying Speakers",
+      analyzing: "Analyzing",
+      diarization_failed: "Diarization Failed",
+      analysis_failed: "Analysis Failed",
     };
-  }, [meeting]);
 
-  const completedActionItems =
-    actionItems.filter(
-      (item) => item.status === "completed"
-    ).length;
+    return labels[status] || status || "Unknown";
+  };
 
-  const actionCompletionRate =
-    actionItems.length > 0
-      ? Math.round(
-          (completedActionItems /
-            actionItems.length) *
-            100
-        )
-      : 0;
 
-  const dominantSpeaker =
-    speakerAnalytics.length > 0
-      ? [...speakerAnalytics].sort(
-          (a, b) =>
-            (b.word_count || 0) -
-            (a.word_count || 0)
-        )[0]
-      : null;
+  const getStatusClass = (status) => {
+    if (status === "completed") {
+      return "bg-green-50 text-green-700 border-green-200";
+    }
+
+    if (
+      [
+        "processing",
+        "preprocessing",
+        "audio_ready",
+        "transcribing",
+        "diarizing",
+        "analyzing",
+      ].includes(status)
+    ) {
+      return "bg-amber-50 text-amber-700 border-amber-200";
+    }
+
+    if (
+      [
+        "analysis_failed",
+        "diarization_failed",
+      ].includes(status)
+    ) {
+      return "bg-red-50 text-red-700 border-red-200";
+    }
+
+    return "bg-slate-50 text-slate-600 border-slate-200";
+  };
+
+
+  const getSentimentPercentage = (value) => {
+    const total =
+      (analytics?.positive || 0) +
+      (analytics?.negative || 0) +
+      (analytics?.neutral || 0);
+
+    if (!total) return 0;
+
+    return Math.round((value / total) * 100);
+  };
+
 
   const getSpeakerPercentage = (wordCount) => {
     const totalWords = speakerAnalytics.reduce(
@@ -309,182 +198,618 @@ export default function MeetingDetails() {
     );
   };
 
-  const getSentimentPercentage = (value) => {
-    const total =
-      (analytics.positive || 0) +
-      (analytics.negative || 0) +
-      (analytics.neutral || 0);
 
-    if (!total) return 0;
-
-    return Math.round(
-      (value / total) * 100
-    );
-  };
-
-  // --------------------------------------------------
-  // HELPERS
-  // --------------------------------------------------
-
-  const formatTimestamp = (seconds) => {
-    const totalSeconds = Math.floor(
-      Number(seconds || 0)
-    );
-
-    const minutes = Math.floor(
-      totalSeconds / 60
-    );
-
-    const remainingSeconds =
-      totalSeconds % 60;
-
-    return `${minutes}:${String(
-      remainingSeconds
-    ).padStart(2, "0")}`;
-  };
-
-  const formatDuration = (seconds) => {
-    if (!seconds) return "Not available";
-
-    const totalSeconds = Number(seconds);
-
-    const hours = Math.floor(
-      totalSeconds / 3600
-    );
-
-    const minutes = Math.floor(
-      (totalSeconds % 3600) / 60
-    );
-
-    const remainingSeconds =
-      Math.floor(totalSeconds % 60);
-
-    if (hours > 0) {
-      return `${hours}h ${minutes}m`;
+  const getInsightIcon = (type) => {
+    if (type === "warning") {
+      return (
+        <AlertCircle className="w-5 h-5 text-amber-500" />
+      );
     }
 
-    if (minutes > 0) {
-      return `${minutes}m ${remainingSeconds}s`;
+    if (type === "negative") {
+      return (
+        <AlertCircle className="w-5 h-5 text-red-500" />
+      );
     }
 
-    return `${remainingSeconds}s`;
+    return (
+      <CheckCircle2 className="w-5 h-5 text-green-600" />
+    );
   };
 
-  const formatDate = (date) => {
-    if (!date) return "Not available";
 
-    return new Date(date).toLocaleString(
-      "en-IN",
-      {
-        dateStyle: "medium",
-        timeStyle: "short",
+  // ---------------------------------------------
+  // Load Meeting Data
+  // ---------------------------------------------
+
+  const fetchMeetingData = async () => {
+    try {
+      setLoading(true);
+      setError("");
+
+      const meetingResponse = await api.get(
+        `/meetings/${meetingId}`
+      );
+
+      const meetingData = meetingResponse.data;
+
+      setMeeting(meetingData);
+
+      // Analytics
+      setAnalytics({
+        totalWords:
+          meetingData.total_words || 0,
+
+        speakerCount:
+          meetingData.speaker_count || 0,
+
+        positive:
+          meetingData.positive_sentiment || 0,
+
+        negative:
+          meetingData.negative_sentiment || 0,
+
+        neutral:
+          meetingData.neutral_sentiment || 0,
+      });
+
+
+      // Effectiveness score
+      if (
+        meetingData.effectiveness_score !== null &&
+        meetingData.effectiveness_score !== undefined
+      ) {
+        setMeetingScore({
+          score: meetingData.effectiveness_score,
+          rating:
+            meetingData.effectiveness_rating ||
+            "",
+        });
+      } else {
+        setMeetingScore(null);
+      }
+
+
+      // Stored AI insights
+      setInsights(
+        parseJson(
+          meetingData.meeting_insights,
+          []
+        )
+      );
+
+      setRecommendations(
+        parseJson(
+          meetingData.meeting_recommendations,
+          []
+        )
+      );
+
+
+      // Transcript
+      try {
+        const transcriptResponse = await api.get(
+          `/meetings/${meetingId}/transcript`
+        );
+
+        setTranscript(
+          transcriptResponse.data
+        );
+      } catch (transcriptError) {
+        console.log(
+          "Transcript not available yet.",
+          transcriptError
+        );
+
+        setTranscript(null);
+      }
+
+
+      // Action items
+      try {
+        setActionLoading(true);
+
+        const actionResponse = await api.get(
+          `/meetings/${meetingId}/action-items`
+        );
+
+        setActionItems(
+          Array.isArray(actionResponse.data)
+            ? actionResponse.data
+            : []
+        );
+      } catch (actionError) {
+        console.log(
+          "Action items not available yet.",
+          actionError
+        );
+
+        setActionItems([]);
+      } finally {
+        setActionLoading(false);
+      }
+
+
+      // Speaker analytics
+      try {
+        const speakerResponse = await api.get(
+          `/meetings/${meetingId}/speaker-analytics`
+        );
+
+        setSpeakerAnalytics(
+          Array.isArray(speakerResponse.data)
+            ? speakerResponse.data
+            : []
+        );
+      } catch (speakerError) {
+        console.log(
+          "Speaker analytics not available yet.",
+          speakerError
+        );
+
+        setSpeakerAnalytics([]);
+      }
+
+    } catch (err) {
+      console.error(
+        "Failed to load meeting:",
+        err
+      );
+
+      setError(
+        err.response?.data?.detail ||
+          "Unable to load meeting."
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+
+  useEffect(() => {
+    fetchMeetingData();
+  }, [meetingId]);
+
+
+  // ---------------------------------------------
+  // Transcript
+  // ---------------------------------------------
+
+  const transcriptSegments = useMemo(() => {
+    if (!transcript) return [];
+
+    if (Array.isArray(transcript.segments)) {
+      return transcript.segments;
+    }
+
+    return parseJson(
+      transcript.segments,
+      []
+    );
+  }, [transcript]);
+
+
+  const hasTranscript =
+    transcriptSegments.length > 0;
+
+
+  const speakers = useMemo(() => {
+    if (!hasTranscript) return [];
+
+    return [
+      ...new Set(
+        transcriptSegments.map(
+          (segment) =>
+            segment.speaker || "UNKNOWN"
+        )
+      ),
+    ];
+  }, [transcriptSegments, hasTranscript]);
+
+
+  const filteredSegments = useMemo(() => {
+    if (!hasTranscript) return [];
+
+    const query =
+      searchQuery.trim().toLowerCase();
+
+    return transcriptSegments.filter(
+      (segment) => {
+        const text =
+          segment.text?.toLowerCase() || "";
+
+        const speaker =
+          segment.speaker || "UNKNOWN";
+
+        const matchesSearch =
+          !query || text.includes(query);
+
+        const matchesSpeaker =
+          selectedSpeaker === "ALL" ||
+          speaker === selectedSpeaker;
+
+        return (
+          matchesSearch &&
+          matchesSpeaker
+        );
       }
     );
-  };
+  }, [
+    transcriptSegments,
+    hasTranscript,
+    searchQuery,
+    selectedSpeaker,
+  ]);
 
-  const getStatusClass = (status) => {
-    switch (status) {
-      case "completed":
-        return "bg-green-50 text-green-700 border-green-200";
-
-      case "processing":
-      case "preprocessing":
-      case "audio_ready":
-      case "transcribing":
-      case "diarizing":
-      case "analyzing":
-        return "bg-amber-50 text-amber-700 border-amber-200";
-
-      case "failed":
-      case "transcription_failed":
-      case "diarization_failed":
-      case "analysis_failed":
-        return "bg-red-50 text-red-700 border-red-200";
-
-      default:
-        return "bg-slate-50 text-slate-600 border-slate-200";
-    }
-  };
-
-  const getActionStatusClass = (status) => {
-    switch (status) {
-      case "completed":
-        return "bg-green-50 text-green-700 border-green-200";
-
-      case "in_progress":
-        return "bg-blue-50 text-blue-700 border-blue-200";
-
-      default:
-        return "bg-amber-50 text-amber-700 border-amber-200";
-    }
-  };
 
   const highlightText = (text) => {
     if (!searchQuery.trim()) {
       return text;
     }
 
-    const query = searchQuery.trim();
+    const query =
+      searchQuery.trim();
 
     const parts = text.split(
-      new RegExp(`(${query})`, "gi")
+      new RegExp(
+        `(${query.replace(
+          /[.*+?^${}()|[\]\\]/g,
+          "\\$&"
+        )})`,
+        "gi"
+      )
     );
 
-    return parts.map((part, index) =>
-      part.toLowerCase() ===
-      query.toLowerCase() ? (
-        <mark
-          key={index}
-          className="bg-yellow-200 rounded px-0.5"
-        >
-          {part}
-        </mark>
-      ) : (
-        part
-      )
+    return parts.map(
+      (part, index) =>
+        part.toLowerCase() ===
+        query.toLowerCase() ? (
+          <mark
+            key={index}
+            className="bg-yellow-200 px-0.5 rounded"
+          >
+            {part}
+          </mark>
+        ) : (
+          <span key={index}>
+            {part}
+          </span>
+        )
     );
   };
 
-  // --------------------------------------------------
-  // LOADING
-  // --------------------------------------------------
+
+  // ---------------------------------------------
+  // Action Items
+  // ---------------------------------------------
+
+  const updateActionItemStatus = async (
+    actionItemId,
+    status
+  ) => {
+    try {
+      setUpdatingActionId(
+        actionItemId
+      );
+
+      await api.patch(
+        `/meetings/${meetingId}/action-items/${actionItemId}`,
+        null,
+        {
+          params: {
+            status,
+          },
+        }
+      );
+
+      setActionItems((currentItems) =>
+        currentItems.map((item) =>
+          item.id === actionItemId
+            ? {
+                ...item,
+                status,
+              }
+            : item
+        )
+      );
+    } catch (err) {
+      console.error(
+        "Failed to update action item:",
+        err
+      );
+
+      alert(
+        err.response?.data?.detail ||
+          "Failed to update action item."
+      );
+    } finally {
+      setUpdatingActionId(null);
+    }
+  };
+
+
+  const completedActionItems =
+    actionItems.filter(
+      (item) =>
+        item.status === "completed"
+    ).length;
+
+
+  const actionCompletionRate =
+    actionItems.length
+      ? Math.round(
+          (completedActionItems /
+            actionItems.length) *
+            100
+        )
+      : 0;
+
+
+  // ---------------------------------------------
+  // Dominant Speaker
+  // ---------------------------------------------
+
+  const dominantSpeaker =
+    speakerAnalytics.length
+      ? [...speakerAnalytics].sort(
+          (a, b) =>
+            (b.word_count || 0) -
+            (a.word_count || 0)
+        )[0]
+      : null;
+
+
+  // ---------------------------------------------
+  // Processing
+  // ---------------------------------------------
+
+  const runTranscription = async () => {
+    try {
+      setProcessing(true);
+      setProcessingStep(
+        "Converting speech to text..."
+      );
+      setError("");
+
+      await api.post(
+        `/meetings/${meetingId}/transcribe`
+      );
+
+      await fetchMeetingData();
+
+    } catch (err) {
+      console.error(err);
+
+      setError(
+        err.response?.data?.detail ||
+          "Transcription failed."
+      );
+    } finally {
+      setProcessing(false);
+      setProcessingStep("");
+    }
+  };
+
+
+  const runDiarization = async () => {
+    try {
+      setProcessing(true);
+      setProcessingStep(
+        "Identifying speakers..."
+      );
+      setError("");
+
+      await api.post(
+        `/meetings/${meetingId}/diarize`
+      );
+
+      await fetchMeetingData();
+
+    } catch (err) {
+      console.error(err);
+
+      setError(
+        err.response?.data?.detail ||
+          "Speaker identification failed."
+      );
+    } finally {
+      setProcessing(false);
+      setProcessingStep("");
+    }
+  };
+
+
+  const runAnalysis = async () => {
+    try {
+      setProcessing(true);
+      setProcessingStep(
+        "Generating AI meeting insights..."
+      );
+      setError("");
+
+      const response = await api.post(
+        `/meetings/${meetingId}/analyze`
+      );
+
+      const result = response.data;
+
+      // AI analysis
+      if (result.summary) {
+        setMeeting((current) => ({
+          ...current,
+          summary: result.summary,
+        }));
+      }
+
+      // Score
+      if (result.meeting_score) {
+        setMeetingScore(
+          result.meeting_score
+        );
+      }
+
+      // Insights
+      setInsights(
+        result.insights || []
+      );
+
+      setRecommendations(
+        result.recommendations || []
+      );
+
+      // Analytics
+      if (result.analytics) {
+        setAnalytics({
+          totalWords:
+            result.analytics.total_words ||
+            0,
+
+          speakerCount:
+            result.analytics.speaker_count ||
+            0,
+
+          positive:
+            result.analytics.positive_sentiment ||
+            0,
+
+          negative:
+            result.analytics.negative_sentiment ||
+            0,
+
+          neutral:
+            result.analytics.neutral_sentiment ||
+            0,
+        });
+      }
+
+      await fetchMeetingData();
+
+    } catch (err) {
+      console.error(err);
+
+      setError(
+        err.response?.data?.detail ||
+          "Meeting analysis failed."
+      );
+    } finally {
+      setProcessing(false);
+      setProcessingStep("");
+    }
+  };
+
+
+  // ---------------------------------------------
+  // Pipeline Button
+  // ---------------------------------------------
+
+  const getPrimaryAction = () => {
+    if (!meeting) return null;
+
+    if (
+      meeting.status === "audio_ready"
+    ) {
+      return {
+        label: "Transcribe Meeting",
+        action: runTranscription,
+      };
+    }
+
+    if (
+      meeting.status === "transcribed"
+    ) {
+      const hasSpeakers =
+        hasTranscript &&
+        transcriptSegments.some(
+          (segment) => segment.speaker
+        );
+
+      if (!hasSpeakers) {
+        return {
+          label: "Identify Speakers",
+          action: runDiarization,
+        };
+      }
+
+      return {
+        label: "Analyze Meeting",
+        action: runAnalysis,
+      };
+    }
+
+    if (
+      meeting.status === "diarization_failed"
+    ) {
+      return {
+        label: "Retry Speaker Identification",
+        action: runDiarization,
+      };
+    }
+
+    if (
+      meeting.status === "analysis_failed"
+    ) {
+      return {
+        label: "Retry AI Analysis",
+        action: runAnalysis,
+      };
+    }
+
+    return null;
+  };
+
+
+  const primaryAction =
+    getPrimaryAction();
+
+
+  // ---------------------------------------------
+  // Loading
+  // ---------------------------------------------
 
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <div className="flex flex-col items-center gap-3">
-          <Loader2 className="w-8 h-8 animate-spin text-slate-700" />
 
-          <p className="text-sm text-slate-500">
+        <div className="text-center">
+
+          <Loader2 className="w-8 h-8 animate-spin text-slate-600 mx-auto" />
+
+          <p className="text-slate-500 mt-3">
             Loading meeting...
           </p>
+
         </div>
+
       </div>
     );
   }
 
-  // --------------------------------------------------
-  // ERROR / NOT FOUND
-  // --------------------------------------------------
+
+  // ---------------------------------------------
+  // Error / No Meeting
+  // ---------------------------------------------
 
   if (!meeting) {
     return (
       <div className="min-h-screen bg-slate-50">
-        <div className="max-w-5xl mx-auto px-6 py-10">
+
+        <div className="max-w-5xl mx-auto px-6 py-8">
 
           <button
-            onClick={() => navigate("/dashboard")}
-            className="flex items-center gap-2 text-sm text-slate-600 hover:text-slate-900"
+            onClick={() =>
+              navigate("/dashboard")
+            }
+            className="flex items-center gap-2 text-slate-600 hover:text-slate-900"
           >
-            <ArrowLeft className="w-4 h-4" />
+            <ArrowLeft className="w-5 h-5" />
             Back to Dashboard
           </button>
 
-          <div className="mt-10 bg-white border border-red-200 rounded-2xl p-8 text-center">
+          <div className="bg-white border border-red-200 rounded-2xl p-10 text-center mt-8">
 
-            <XCircle className="w-10 h-10 text-red-500 mx-auto mb-3" />
+            <AlertCircle className="w-10 h-10 text-red-500 mx-auto" />
 
-            <h2 className="text-xl font-semibold text-slate-900">
+            <h2 className="text-xl font-semibold text-slate-900 mt-4">
               Meeting not found
             </h2>
 
@@ -493,108 +818,77 @@ export default function MeetingDetails() {
             </p>
 
           </div>
+
         </div>
+
       </div>
     );
   }
 
-  // --------------------------------------------------
-  // MAIN UI
-  // --------------------------------------------------
+
+  // ---------------------------------------------
+  // Main UI
+  // ---------------------------------------------
 
   return (
     <div className="min-h-screen bg-slate-50">
 
-      {/* HEADER */}
+      {/* Header */}
 
       <header className="bg-white border-b border-slate-200">
 
-        <div className="max-w-7xl mx-auto px-6 py-5">
+        <div className="max-w-7xl mx-auto px-6 py-4">
 
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-5">
+          <button
+            onClick={() =>
+              navigate("/dashboard")
+            }
+            className="flex items-center gap-2 text-sm text-slate-500 hover:text-slate-900 mb-5"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            Back to Dashboard
+          </button>
+
+
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5">
 
             <div>
 
-              <button
-                onClick={() =>
-                  navigate("/dashboard")
-                }
-                className="flex items-center gap-2 text-sm text-slate-500 hover:text-slate-900 mb-4"
-              >
-                <ArrowLeft className="w-4 h-4" />
-                Back to Dashboard
-              </button>
+              <div className="flex items-center gap-3 flex-wrap">
 
-              <div className="flex items-start gap-4">
+                <h1 className="text-2xl font-bold text-slate-900">
+                  {meeting.title ||
+                    "Untitled Meeting"}
+                </h1>
 
-                <div className="p-3 bg-slate-900 rounded-xl">
-                  <FileAudio className="w-6 h-6 text-white" />
-                </div>
-
-                <div>
-
-                  <h1 className="text-2xl font-bold text-slate-900">
-                    {meeting.title}
-                  </h1>
-
-                  <div className="flex flex-wrap items-center gap-4 mt-2 text-sm text-slate-500">
-
-                    <span className="flex items-center gap-1.5">
-                      <FileAudio className="w-4 h-4" />
-                      {meeting.file_name}
-                    </span>
-
-                    <span className="flex items-center gap-1.5">
-                      <Clock className="w-4 h-4" />
-                      {formatDuration(
-                        meeting.duration
-                      )}
-                    </span>
-
-                    <span className="flex items-center gap-1.5">
-                      <CalendarDays className="w-4 h-4" />
-                      {formatDate(
-                        meeting.created_at
-                      )}
-                    </span>
-
-                  </div>
-
-                </div>
+                <span
+                  className={`px-3 py-1 rounded-full border text-xs font-medium ${getStatusClass(
+                    meeting.status
+                  )}`}
+                >
+                  {getStatusLabel(
+                    meeting.status
+                  )}
+                </span>
 
               </div>
 
+              <p className="text-sm text-slate-500 mt-2">
+                {meeting.file_name}
+              </p>
+
             </div>
 
 
-            <div className="flex items-center gap-3">
-
-              <span
-                className={`px-3 py-2 rounded-lg border text-sm font-medium ${getStatusClass(
-                  meeting.status
-                )}`}
-              >
-                {meeting.status}
-              </span>
-
+            {primaryAction && !processing && (
               <button
-                onClick={() =>
-                  fetchMeetingData(false)
-                }
-                disabled={refreshing}
-                className="p-2.5 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 disabled:opacity-50"
-                title="Refresh"
+                onClick={primaryAction.action}
+                className="flex items-center justify-center gap-2 px-5 py-3 bg-slate-900 text-white rounded-xl hover:bg-slate-800 transition"
               >
-                <RefreshCw
-                  className={`w-5 h-5 ${
-                    refreshing
-                      ? "animate-spin"
-                      : ""
-                  }`}
-                />
+                <Play className="w-4 h-4" />
+                {primaryAction.label}
               </button>
-
-            </div>
+            )}
 
           </div>
 
@@ -605,14 +899,14 @@ export default function MeetingDetails() {
 
       <main className="max-w-7xl mx-auto px-6 py-8">
 
-        {/* ERROR */}
+        {/* Error */}
 
         {error && (
-          <div className="mb-6 bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 flex items-start gap-3">
+          <div className="mb-6 bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-3">
 
-            <XCircle className="w-5 h-5 mt-0.5 flex-shrink-0" />
+            <AlertCircle className="w-5 h-5 text-red-500 mt-0.5" />
 
-            <p className="text-sm">
+            <p className="text-sm text-red-700">
               {error}
             </p>
 
@@ -620,134 +914,384 @@ export default function MeetingDetails() {
         )}
 
 
-        {/* PROCESSING ACTIONS */}
+        {/* Processing */}
 
-        <section className="bg-white border border-slate-200 rounded-2xl p-6 mb-8 shadow-sm">
+        {processing && (
+          <div className="mb-6 bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
 
-          <div className="flex items-center gap-3 mb-5">
+            <div className="flex items-center gap-3">
 
-            <div className="p-3 bg-slate-100 rounded-xl">
-              <Sparkles className="w-5 h-5 text-slate-700" />
-            </div>
-
-            <div>
-
-              <h2 className="text-lg font-semibold text-slate-900">
-                Meeting Processing
-              </h2>
-
-              <p className="text-sm text-slate-500">
-                Process your recording step by step
-              </p>
-
-            </div>
-
-          </div>
-
-
-          <div className="flex flex-wrap gap-3">
-
-            <button
-              onClick={handleTranscribe}
-              disabled={
-                transcribing ||
-                !meeting.audio_path ||
-                meeting.status === "transcribing"
-              }
-              className="flex items-center gap-2 px-4 py-2.5 bg-slate-900 text-white rounded-lg hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {transcribing ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <MessageSquareText className="w-4 h-4" />
-              )}
-
-              {transcribing
-                ? "Transcribing..."
-                : "Transcribe"}
-            </button>
-
-
-            <button
-              onClick={handleDiarize}
-              disabled={
-                diarizing ||
-                !hasTranscript ||
-                meeting.status === "diarizing"
-              }
-              className="flex items-center gap-2 px-4 py-2.5 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {diarizing ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Users className="w-4 h-4" />
-              )}
-
-              {diarizing
-                ? "Identifying Speakers..."
-                : "Identify Speakers"}
-            </button>
-
-
-            <button
-              onClick={handleAnalyze}
-              disabled={
-                analyzing ||
-                !hasTranscript ||
-                meeting.status === "analyzing"
-              }
-              className="flex items-center gap-2 px-4 py-2.5 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {analyzing ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Sparkles className="w-4 h-4" />
-              )}
-
-              {analyzing
-                ? "Analyzing..."
-                : "Analyze Meeting"}
-            </button>
-
-          </div>
-
-        </section>
-
-
-        {/* AI SUMMARY */}
-
-        {meeting.summary && (
-          <section className="bg-white border border-slate-200 rounded-2xl p-6 mb-8 shadow-sm">
-
-            <div className="flex items-center gap-3 mb-5">
-
-              <div className="p-3 bg-slate-900 rounded-xl">
-                <Sparkles className="w-5 h-5 text-white" />
-              </div>
+              <Loader2 className="w-5 h-5 animate-spin text-slate-700" />
 
               <div>
 
-                <h2 className="text-xl font-semibold text-slate-900">
-                  AI Meeting Summary
-                </h2>
+                <p className="font-medium text-slate-900">
+                  {processingStep}
+                </p>
 
-                <p className="text-sm text-slate-500">
-                  Generated from the meeting transcript
+                <p className="text-sm text-slate-500 mt-1">
+                  This may take some time depending on
+                  the length of the recording.
                 </p>
 
               </div>
 
             </div>
 
-            <p className="text-slate-700 leading-7 whitespace-pre-line">
-              {meeting.summary}
-            </p>
+          </div>
+        )}
+
+
+        {/* Meeting Metadata */}
+
+        <section className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+
+          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+
+            <div className="flex items-center gap-3">
+
+              <div className="p-3 bg-slate-100 rounded-xl">
+                <CalendarDays className="w-5 h-5 text-slate-600" />
+              </div>
+
+              <div>
+
+                <p className="text-xs text-slate-500">
+                  Created
+                </p>
+
+                <p className="font-medium text-slate-900 mt-1">
+                  {formatDate(
+                    meeting.created_at
+                  )}
+                </p>
+
+              </div>
+
+            </div>
+
+          </div>
+
+
+          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+
+            <div className="flex items-center gap-3">
+
+              <div className="p-3 bg-slate-100 rounded-xl">
+                <Clock3 className="w-5 h-5 text-slate-600" />
+              </div>
+
+              <div>
+
+                <p className="text-xs text-slate-500">
+                  Duration
+                </p>
+
+                <p className="font-medium text-slate-900 mt-1">
+                  {formatDuration(
+                    meeting.duration
+                  )}
+                </p>
+
+              </div>
+
+            </div>
+
+          </div>
+
+
+          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+
+            <div className="flex items-center gap-3">
+
+              <div className="p-3 bg-slate-100 rounded-xl">
+                <FileText className="w-5 h-5 text-slate-600" />
+              </div>
+
+              <div>
+
+                <p className="text-xs text-slate-500">
+                  File
+                </p>
+
+                <p className="font-medium text-slate-900 mt-1 truncate max-w-[220px]">
+                  {meeting.file_name}
+                </p>
+
+              </div>
+
+            </div>
+
+          </div>
+
+        </section>
+
+
+        {/* Meeting Effectiveness */}
+
+        {meetingScore && (
+          <section className="bg-white border border-slate-200 rounded-2xl p-6 mb-8 shadow-sm">
+
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+
+              <div>
+
+                <div className="flex items-center gap-2">
+
+                  <Sparkles className="w-5 h-5 text-slate-700" />
+
+                  <p className="text-sm font-medium text-slate-500">
+                    Meeting Effectiveness
+                  </p>
+
+                </div>
+
+                <div className="flex items-baseline gap-3 mt-2">
+
+                  <span className="text-5xl font-bold text-slate-900">
+                    {meetingScore.score}
+                  </span>
+
+                  <span className="text-lg text-slate-400">
+                    /100
+                  </span>
+
+                </div>
+
+                <p className="text-sm text-slate-500 mt-2 max-w-2xl">
+                  Overall meeting quality based on
+                  participation, sentiment, action items,
+                  transcript quality and efficiency.
+                </p>
+
+              </div>
+
+
+              <div className="flex flex-col items-center">
+
+                <div className="w-28 h-28 rounded-full border-8 border-slate-200 flex items-center justify-center">
+
+                  <span className="text-2xl font-bold text-slate-900">
+                    {meetingScore.score}
+                  </span>
+
+                </div>
+
+                <span className="mt-3 text-sm font-semibold text-slate-700">
+                  {meetingScore.rating}
+                </span>
+
+              </div>
+
+            </div>
 
           </section>
         )}
 
 
-        {/* MEETING INTELLIGENCE */}
+        {/* Score Breakdown */}
+
+        {meetingScore?.breakdown && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
+
+            {[
+              [
+                "Participation",
+                meetingScore.breakdown.participation,
+                25,
+              ],
+              [
+                "Sentiment",
+                meetingScore.breakdown.sentiment,
+                20,
+              ],
+              [
+                "Action Items",
+                meetingScore.breakdown.action_items,
+                25,
+              ],
+              [
+                "Transcript",
+                meetingScore.breakdown.transcript_quality,
+                20,
+              ],
+              [
+                "Efficiency",
+                meetingScore.breakdown.efficiency,
+                10,
+              ],
+            ].map(
+              ([label, value, max]) => {
+
+                const percentage =
+                  max > 0
+                    ? Math.round(
+                        (value / max) *
+                          100
+                      )
+                    : 0;
+
+                return (
+                  <div
+                    key={label}
+                    className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm"
+                  >
+
+                    <div className="flex justify-between gap-2">
+
+                      <span className="text-sm text-slate-500">
+                        {label}
+                      </span>
+
+                      <span className="text-sm font-semibold text-slate-900">
+                        {value}/{max}
+                      </span>
+
+                    </div>
+
+                    <div className="w-full bg-slate-100 rounded-full h-2 mt-3">
+
+                      <div
+                        className="bg-slate-800 h-2 rounded-full transition-all duration-500"
+                        style={{
+                          width: `${percentage}%`,
+                        }}
+                      />
+
+                    </div>
+
+                  </div>
+                );
+              }
+            )}
+
+          </div>
+        )}
+
+
+        {/* AI Insights */}
+
+        {insights.length > 0 && (
+          <section className="bg-white border border-slate-200 rounded-2xl p-6 mb-8 shadow-sm">
+
+            <div className="flex items-center gap-3 mb-6">
+
+              <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center">
+                <TrendingUp className="w-5 h-5 text-slate-700" />
+              </div>
+
+              <div>
+
+                <h2 className="text-xl font-semibold text-slate-900">
+                  AI Meeting Insights
+                </h2>
+
+                <p className="text-sm text-slate-500 mt-1">
+                  What the AI found in this meeting
+                </p>
+
+              </div>
+
+            </div>
+
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+              {insights.map(
+                (insight, index) => (
+                  <div
+                    key={index}
+                    className="border border-slate-200 rounded-xl p-5"
+                  >
+
+                    <div className="flex items-start gap-3">
+
+                      <div className="mt-1">
+                        {getInsightIcon(
+                          insight.type
+                        )}
+                      </div>
+
+                      <div>
+
+                        <h3 className="font-semibold text-slate-900">
+                          {insight.title ||
+                            "Meeting Insight"}
+                        </h3>
+
+                        <p className="text-sm text-slate-600 mt-2 leading-6">
+                          {insight.description ||
+                            ""}
+                        </p>
+
+                      </div>
+
+                    </div>
+
+                  </div>
+                )
+              )}
+
+            </div>
+
+          </section>
+        )}
+
+
+        {/* AI Recommendations */}
+
+        {recommendations.length > 0 && (
+          <section className="bg-white border border-slate-200 rounded-2xl p-6 mb-8 shadow-sm">
+
+            <div className="flex items-center gap-3 mb-6">
+
+              <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center">
+                <Sparkles className="w-5 h-5 text-slate-700" />
+              </div>
+
+              <div>
+
+                <h2 className="text-xl font-semibold text-slate-900">
+                  AI Recommendations
+                </h2>
+
+                <p className="text-sm text-slate-500 mt-1">
+                  Suggestions to improve future meetings
+                </p>
+
+              </div>
+
+            </div>
+
+
+            <div className="space-y-3">
+
+              {recommendations.map(
+                (recommendation, index) => (
+                  <div
+                    key={index}
+                    className="flex gap-3 p-4 bg-slate-50 rounded-xl"
+                  >
+
+                    <span className="w-7 h-7 shrink-0 rounded-full bg-slate-900 text-white flex items-center justify-center text-sm font-semibold">
+                      {index + 1}
+                    </span>
+
+                    <p className="text-sm text-slate-700 leading-6">
+                      {recommendation}
+                    </p>
+
+                  </div>
+                )
+              )}
+
+            </div>
+
+          </section>
+        )}
+
+
+        {/* Meeting Intelligence */}
 
         <section className="mb-8">
 
@@ -766,7 +1310,7 @@ export default function MeetingDetails() {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
 
-            {/* TOTAL WORDS */}
+            {/* Total Words */}
 
             <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
 
@@ -779,13 +1323,13 @@ export default function MeetingDetails() {
                   </p>
 
                   <p className="text-3xl font-bold text-slate-900 mt-2">
-                    {analytics.totalWords}
+                    {analytics?.totalWords || 0}
                   </p>
 
                 </div>
 
-                <div className="p-3 bg-blue-50 rounded-xl">
-                  <MessageSquareText className="w-6 h-6 text-blue-600" />
+                <div className="p-3 bg-slate-100 rounded-xl">
+                  <MessageSquareText className="w-6 h-6 text-slate-600" />
                 </div>
 
               </div>
@@ -793,7 +1337,7 @@ export default function MeetingDetails() {
             </div>
 
 
-            {/* SPEAKERS */}
+            {/* Speakers */}
 
             <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
 
@@ -806,13 +1350,13 @@ export default function MeetingDetails() {
                   </p>
 
                   <p className="text-3xl font-bold text-slate-900 mt-2">
-                    {analytics.speakerCount}
+                    {analytics?.speakerCount || 0}
                   </p>
 
                 </div>
 
-                <div className="p-3 bg-purple-50 rounded-xl">
-                  <Users className="w-6 h-6 text-purple-600" />
+                <div className="p-3 bg-slate-100 rounded-xl">
+                  <Users className="w-6 h-6 text-slate-600" />
                 </div>
 
               </div>
@@ -820,7 +1364,7 @@ export default function MeetingDetails() {
             </div>
 
 
-            {/* POSITIVE */}
+            {/* Positive */}
 
             <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
 
@@ -832,14 +1376,14 @@ export default function MeetingDetails() {
                     Positive Segments
                   </p>
 
-                  <p className="text-3xl font-bold text-slate-900 mt-2">
-                    {analytics.positive}
+                  <p className="text-3xl font-bold text-green-600 mt-2">
+                    {analytics?.positive || 0}
                   </p>
 
                 </div>
 
-                <div className="p-3 bg-green-50 rounded-xl">
-                  <Smile className="w-6 h-6 text-green-600" />
+                <div className="p-3 bg-slate-100 rounded-xl">
+                  <CheckCircle2 className="w-6 h-6 text-green-600" />
                 </div>
 
               </div>
@@ -847,7 +1391,7 @@ export default function MeetingDetails() {
             </div>
 
 
-            {/* ACTION ITEMS */}
+            {/* Action Items */}
 
             <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
 
@@ -865,8 +1409,8 @@ export default function MeetingDetails() {
 
                 </div>
 
-                <div className="p-3 bg-amber-50 rounded-xl">
-                  <CheckCircle2 className="w-6 h-6 text-amber-600" />
+                <div className="p-3 bg-slate-100 rounded-xl">
+                  <CheckCircle2 className="w-6 h-6 text-slate-600" />
                 </div>
 
               </div>
@@ -878,7 +1422,7 @@ export default function MeetingDetails() {
         </section>
 
 
-        {/* SENTIMENT */}
+        {/* Sentiment Overview */}
 
         <section className="bg-white border border-slate-200 rounded-2xl p-6 mb-8 shadow-sm">
 
@@ -905,9 +1449,9 @@ export default function MeetingDetails() {
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
 
-            {/* POSITIVE */}
+            {/* Positive */}
 
-            <div className="border border-green-100 rounded-xl p-5">
+            <div className="border border-slate-200 rounded-xl p-5">
 
               <div className="flex justify-between mb-3">
 
@@ -916,7 +1460,7 @@ export default function MeetingDetails() {
                 </span>
 
                 <span className="font-semibold text-green-600">
-                  {analytics.positive}
+                  {analytics?.positive || 0}
                 </span>
 
               </div>
@@ -924,19 +1468,19 @@ export default function MeetingDetails() {
               <div className="w-full bg-slate-100 rounded-full h-3">
 
                 <div
-                  className="bg-green-500 h-3 rounded-full transition-all duration-500"
+                  className="bg-green-500 h-3 rounded-full"
                   style={{
                     width: `${getSentimentPercentage(
-                      analytics.positive
+                      analytics?.positive || 0
                     )}%`,
                   }}
                 />
 
               </div>
 
-              <p className="text-xs text-slate-400 mt-2">
+              <p className="text-xs text-slate-500 mt-2">
                 {getSentimentPercentage(
-                  analytics.positive
+                  analytics?.positive || 0
                 )}
                 %
               </p>
@@ -944,9 +1488,9 @@ export default function MeetingDetails() {
             </div>
 
 
-            {/* NEGATIVE */}
+            {/* Negative */}
 
-            <div className="border border-red-100 rounded-xl p-5">
+            <div className="border border-slate-200 rounded-xl p-5">
 
               <div className="flex justify-between mb-3">
 
@@ -955,7 +1499,7 @@ export default function MeetingDetails() {
                 </span>
 
                 <span className="font-semibold text-red-600">
-                  {analytics.negative}
+                  {analytics?.negative || 0}
                 </span>
 
               </div>
@@ -963,19 +1507,19 @@ export default function MeetingDetails() {
               <div className="w-full bg-slate-100 rounded-full h-3">
 
                 <div
-                  className="bg-red-500 h-3 rounded-full transition-all duration-500"
+                  className="bg-red-500 h-3 rounded-full"
                   style={{
                     width: `${getSentimentPercentage(
-                      analytics.negative
+                      analytics?.negative || 0
                     )}%`,
                   }}
                 />
 
               </div>
 
-              <p className="text-xs text-slate-400 mt-2">
+              <p className="text-xs text-slate-500 mt-2">
                 {getSentimentPercentage(
-                  analytics.negative
+                  analytics?.negative || 0
                 )}
                 %
               </p>
@@ -983,7 +1527,7 @@ export default function MeetingDetails() {
             </div>
 
 
-            {/* NEUTRAL */}
+            {/* Neutral */}
 
             <div className="border border-slate-200 rounded-xl p-5">
 
@@ -994,7 +1538,7 @@ export default function MeetingDetails() {
                 </span>
 
                 <span className="font-semibold text-slate-600">
-                  {analytics.neutral}
+                  {analytics?.neutral || 0}
                 </span>
 
               </div>
@@ -1002,19 +1546,19 @@ export default function MeetingDetails() {
               <div className="w-full bg-slate-100 rounded-full h-3">
 
                 <div
-                  className="bg-slate-400 h-3 rounded-full transition-all duration-500"
+                  className="bg-slate-400 h-3 rounded-full"
                   style={{
                     width: `${getSentimentPercentage(
-                      analytics.neutral
+                      analytics?.neutral || 0
                     )}%`,
                   }}
                 />
 
               </div>
 
-              <p className="text-xs text-slate-400 mt-2">
+              <p className="text-xs text-slate-500 mt-2">
                 {getSentimentPercentage(
-                  analytics.neutral
+                  analytics?.neutral || 0
                 )}
                 %
               </p>
@@ -1026,164 +1570,21 @@ export default function MeetingDetails() {
         </section>
 
 
-        {/* KEY POINTS + DECISIONS */}
-
-        {(meeting.key_points ||
-          meeting.decisions) && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-
-            {/* KEY POINTS */}
-
-            {meeting.key_points && (
-              <section className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
-
-                <div className="flex items-center gap-3 mb-5">
-
-                  <div className="p-3 bg-blue-50 rounded-xl">
-                    <TrendingUp className="w-5 h-5 text-blue-600" />
-                  </div>
-
-                  <h2 className="text-xl font-semibold text-slate-900">
-                    Key Points
-                  </h2>
-
-                </div>
-
-                <div className="space-y-3">
-
-                  {(() => {
-                    try {
-                      const points =
-                        JSON.parse(
-                          meeting.key_points
-                        );
-
-                      if (!Array.isArray(points)) {
-                        return (
-                          <p className="text-slate-600">
-                            {meeting.key_points}
-                          </p>
-                        );
-                      }
-
-                      return points.map(
-                        (point, index) => (
-                          <div
-                            key={index}
-                            className="flex gap-3"
-                          >
-                            <span className="mt-2 w-2 h-2 rounded-full bg-slate-700 flex-shrink-0" />
-
-                            <p className="text-slate-700 leading-6">
-                              {point}
-                            </p>
-                          </div>
-                        )
-                      );
-                    } catch {
-                      return (
-                        <p className="text-slate-600">
-                          {meeting.key_points}
-                        </p>
-                      );
-                    }
-                  })()}
-
-                </div>
-
-              </section>
-            )}
-
-
-            {/* DECISIONS */}
-
-            {meeting.decisions && (
-              <section className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
-
-                <div className="flex items-center gap-3 mb-5">
-
-                  <div className="p-3 bg-purple-50 rounded-xl">
-                    <CheckCircle2 className="w-5 h-5 text-purple-600" />
-                  </div>
-
-                  <h2 className="text-xl font-semibold text-slate-900">
-                    Decisions
-                  </h2>
-
-                </div>
-
-                <div className="space-y-3">
-
-                  {(() => {
-                    try {
-                      const decisions =
-                        JSON.parse(
-                          meeting.decisions
-                        );
-
-                      if (!Array.isArray(decisions)) {
-                        return (
-                          <p className="text-slate-600">
-                            {meeting.decisions}
-                          </p>
-                        );
-                      }
-
-                      return decisions.map(
-                        (decision, index) => (
-                          <div
-                            key={index}
-                            className="flex gap-3"
-                          >
-                            <CheckCircle2 className="w-5 h-5 text-purple-600 flex-shrink-0 mt-0.5" />
-
-                            <p className="text-slate-700 leading-6">
-                              {decision}
-                            </p>
-                          </div>
-                        )
-                      );
-                    } catch {
-                      return (
-                        <p className="text-slate-600">
-                          {meeting.decisions}
-                        </p>
-                      );
-                    }
-                  })()}
-
-                </div>
-
-              </section>
-            )}
-
-          </div>
-        )}
-
-
-        {/* SPEAKER INTELLIGENCE */}
+        {/* Speaker Intelligence */}
 
         <section className="bg-white border border-slate-200 rounded-2xl p-6 mb-8 shadow-sm">
 
           <div className="flex items-center justify-between mb-6">
 
-            <div className="flex items-center gap-3">
+            <div>
 
-              <div className="p-3 bg-slate-100 rounded-xl">
-                <Users className="w-6 h-6 text-slate-700" />
-              </div>
+              <h2 className="text-xl font-semibold text-slate-900">
+                Speaker Intelligence
+              </h2>
 
-              <div>
-
-                <h2 className="text-xl font-semibold text-slate-900">
-                  Speaker Intelligence
-                </h2>
-
-                <p className="text-sm text-slate-500 mt-1">
-                  Participation and speaking analysis
-                </p>
-
-              </div>
+              <p className="text-sm text-slate-500 mt-1">
+                Participation and speaking analysis
+              </p>
 
             </div>
 
@@ -1209,17 +1610,15 @@ export default function MeetingDetails() {
 
             <div className="text-center py-10">
 
-              <Users className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+              <Users className="w-8 h-8 text-slate-300 mx-auto" />
 
-              <p className="text-slate-500">
+              <p className="text-slate-500 mt-3">
                 Speaker analytics are not available yet.
               </p>
 
-              {hasTranscript && (
-                <p className="text-xs text-slate-400 mt-1">
-                  Run speaker identification to generate speaker analytics.
-                </p>
-              )}
+              <p className="text-xs text-slate-400 mt-1">
+                Run speaker identification and analysis first.
+              </p>
 
             </div>
 
@@ -1258,7 +1657,7 @@ export default function MeetingDetails() {
 
                       <div className="flex items-center justify-between mb-4">
 
-                        <div className="flex gap-3 items-center">
+                        <div className="flex gap-3">
 
                           <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center">
 
@@ -1317,8 +1716,7 @@ export default function MeetingDetails() {
                           </p>
 
                           <p className="font-semibold text-slate-900 mt-1">
-                            {minutes}m{" "}
-                            {seconds}s
+                            {minutes}m {seconds}s
                           </p>
 
                         </div>
@@ -1354,14 +1752,13 @@ export default function MeetingDetails() {
 
                 <div className="flex gap-3">
 
-                  <TrendingUp className="w-5 h-5 text-slate-700 mt-0.5 flex-shrink-0" />
+                  <TrendingUp className="w-5 h-5 text-slate-700 mt-0.5 shrink-0" />
 
                   <p className="text-sm text-slate-600">
 
                     <span className="font-semibold text-slate-900">
                       {dominantSpeaker.speaker}
                     </span>{" "}
-
                     had the highest participation with{" "}
 
                     <span className="font-semibold text-slate-900">
@@ -1370,7 +1767,6 @@ export default function MeetingDetails() {
                       )}
                       %
                     </span>{" "}
-
                     of the meeting's spoken words.
 
                   </p>
@@ -1383,9 +1779,9 @@ export default function MeetingDetails() {
         </section>
 
 
-        {/* ACTION ITEMS */}
+        {/* Action Items */}
 
-        <section className="bg-white border border-slate-200 rounded-2xl p-6 mb-8 shadow-sm">
+        <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 mb-8">
 
           <div className="flex items-center justify-between mb-6">
 
@@ -1405,11 +1801,14 @@ export default function MeetingDetails() {
             <div className="text-right">
 
               <p className="text-sm text-slate-500">
-                {actionItems.length} tasks
+                {actionItems.length} task
+                {actionItems.length !== 1
+                  ? "s"
+                  : ""}
               </p>
 
               {actionItems.length > 0 && (
-                <p className="text-sm font-medium text-slate-700 mt-1">
+                <p className="text-xs text-slate-400 mt-1">
                   {actionCompletionRate}% completed
                 </p>
               )}
@@ -1419,21 +1818,27 @@ export default function MeetingDetails() {
           </div>
 
 
-          {actionItems.length === 0 ? (
+          {actionLoading ? (
+
+            <div className="py-10 text-center">
+
+              <Loader2 className="w-6 h-6 animate-spin mx-auto text-slate-500" />
+
+              <p className="text-sm text-slate-500 mt-3">
+                Loading action items...
+              </p>
+
+            </div>
+
+          ) : actionItems.length === 0 ? (
 
             <div className="text-center py-10">
 
-              <CheckCircle2 className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+              <CheckCircle2 className="w-8 h-8 text-slate-300 mx-auto" />
 
-              <p className="text-slate-500">
+              <p className="text-slate-500 mt-3">
                 No action items found.
               </p>
-
-              {meeting.summary && (
-                <p className="text-xs text-slate-400 mt-1">
-                  AI analysis did not identify any action items.
-                </p>
-              )}
 
             </div>
 
@@ -1441,89 +1846,87 @@ export default function MeetingDetails() {
 
             <div className="space-y-4">
 
-              {actionItems.map((item) => (
+              {actionItems.map(
+                (item) => (
 
-                <div
-                  key={item.id}
-                  className="border border-slate-200 rounded-xl p-4 hover:shadow-sm transition"
-                >
+                  <div
+                    key={item.id}
+                    className="border border-slate-200 rounded-xl p-4 hover:shadow-sm transition"
+                  >
 
-                  <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+                    <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
 
-                    <div className="flex gap-3">
+                      <div className="flex gap-3">
 
-                      <div className="mt-1">
+                        <div className="mt-1">
 
-                        {item.status ===
-                        "completed" ? (
-                          <CheckCircle2 className="w-5 h-5 text-green-600" />
-                        ) : (
-                          <Clock className="w-5 h-5 text-amber-500" />
-                        )}
+                          {item.status ===
+                          "completed" ? (
+                            <CheckCircle2 className="w-5 h-5 text-green-600" />
+                          ) : (
+                            <Clock3 className="w-5 h-5 text-amber-500" />
+                          )}
 
-                      </div>
-
-
-                      <div>
-
-                        <p
-                          className={`font-medium ${
-                            item.status ===
-                            "completed"
-                              ? "line-through text-slate-400"
-                              : "text-slate-900"
-                          }`}
-                        >
-                          {item.task}
-                        </p>
+                        </div>
 
 
-                        <div className="flex flex-wrap gap-4 mt-3 text-sm text-slate-500">
+                        <div>
 
-                          <span className="flex items-center gap-1">
-                            <User className="w-4 h-4" />
-                            {item.assigned_to ||
-                              "Unknown"}
-                          </span>
+                          <p
+                            className={`font-medium ${
+                              item.status ===
+                              "completed"
+                                ? "line-through text-slate-400"
+                                : "text-slate-900"
+                            }`}
+                          >
+                            {item.task}
+                          </p>
 
-                          <span className="flex items-center gap-1">
-                            <CalendarDays className="w-4 h-4" />
-                            {item.deadline ||
-                              "Not mentioned"}
-                          </span>
+
+                          <div className="flex flex-wrap gap-4 mt-3 text-sm text-slate-500">
+
+                            <span className="flex items-center gap-1">
+
+                              <User className="w-4 h-4" />
+
+                              {item.assigned_to ||
+                                "Unknown"}
+
+                            </span>
+
+
+                            <span className="flex items-center gap-1">
+
+                              <CalendarDays className="w-4 h-4" />
+
+                              {item.deadline ||
+                                "Not mentioned"}
+
+                            </span>
+
+                          </div>
 
                         </div>
 
                       </div>
 
-                    </div>
 
+                      <div className="flex items-center gap-2">
 
-                    <div className="flex items-center gap-3">
-
-                      <span
-                        className={`hidden sm:block px-2.5 py-1 rounded-lg border text-xs font-medium ${getActionStatusClass(
-                          item.status
-                        )}`}
-                      >
-                        {item.status ===
-                        "in_progress"
-                          ? "In Progress"
-                          : item.status
-                            ? item.status
-                                .charAt(0)
-                                .toUpperCase() +
-                              item.status.slice(1)
-                            : "Pending"}
-                      </span>
-
-
-                      <div className="relative">
+                        {updatingActionId ===
+                          item.id && (
+                          <Loader2 className="w-4 h-4 animate-spin text-slate-500" />
+                        )}
 
                         <select
                           value={
                             item.status ||
                             "pending"
+                          }
+                          disabled={
+                            updatingActionId ===
+                            item.id
                           }
                           onChange={(e) =>
                             updateActionItemStatus(
@@ -1531,7 +1934,7 @@ export default function MeetingDetails() {
                               e.target.value
                             )
                           }
-                          className="appearance-none border border-slate-300 rounded-lg pl-3 pr-8 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-slate-200"
+                          className="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white"
                         >
 
                           <option value="pending">
@@ -1548,17 +1951,14 @@ export default function MeetingDetails() {
 
                         </select>
 
-                        <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
-
                       </div>
 
                     </div>
 
                   </div>
 
-                </div>
-
-              ))}
+                )
+              )}
 
             </div>
 
@@ -1567,13 +1967,129 @@ export default function MeetingDetails() {
         </section>
 
 
-        {/* TRANSCRIPT */}
+        {/* Summary */}
 
-        <section className="bg-white border border-slate-200 rounded-2xl shadow-sm">
+        {meeting.summary && (
+          <section className="bg-white border border-slate-200 rounded-2xl p-6 mb-8 shadow-sm">
+
+            <div className="flex items-center gap-3 mb-5">
+
+              <div className="p-3 bg-slate-100 rounded-xl">
+                <FileText className="w-5 h-5 text-slate-700" />
+              </div>
+
+              <div>
+
+                <h2 className="text-xl font-semibold text-slate-900">
+                  Meeting Summary
+                </h2>
+
+                <p className="text-sm text-slate-500">
+                  AI-generated overview
+                </p>
+
+              </div>
+
+            </div>
+
+
+            <p className="text-slate-700 leading-7 whitespace-pre-wrap">
+              {meeting.summary}
+            </p>
+
+          </section>
+        )}
+
+
+        {/* Key Points */}
+
+        {parseJson(
+          meeting.key_points,
+          []
+        ).length > 0 && (
+          <section className="bg-white border border-slate-200 rounded-2xl p-6 mb-8 shadow-sm">
+
+            <h2 className="text-xl font-semibold text-slate-900 mb-5">
+              Key Points
+            </h2>
+
+            <div className="space-y-3">
+
+              {parseJson(
+                meeting.key_points,
+                []
+              ).map(
+                (point, index) => (
+                  <div
+                    key={index}
+                    className="flex gap-3"
+                  >
+
+                    <span className="w-6 h-6 shrink-0 rounded-full bg-slate-900 text-white flex items-center justify-center text-xs font-semibold">
+                      {index + 1}
+                    </span>
+
+                    <p className="text-sm text-slate-700 leading-6">
+                      {point}
+                    </p>
+
+                  </div>
+                )
+              )}
+
+            </div>
+
+          </section>
+        )}
+
+
+        {/* Decisions */}
+
+        {parseJson(
+          meeting.decisions,
+          []
+        ).length > 0 && (
+          <section className="bg-white border border-slate-200 rounded-2xl p-6 mb-8 shadow-sm">
+
+            <h2 className="text-xl font-semibold text-slate-900 mb-5">
+              Decisions
+            </h2>
+
+            <div className="space-y-3">
+
+              {parseJson(
+                meeting.decisions,
+                []
+              ).map(
+                (decision, index) => (
+                  <div
+                    key={index}
+                    className="flex gap-3"
+                  >
+
+                    <CheckCircle2 className="w-5 h-5 text-green-600 shrink-0 mt-0.5" />
+
+                    <p className="text-sm text-slate-700 leading-6">
+                      {decision}
+                    </p>
+
+                  </div>
+                )
+              )}
+
+            </div>
+
+          </section>
+        )}
+
+
+        {/* Transcript */}
+
+        <section className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
 
           <div className="p-6 border-b border-slate-200">
 
-            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
 
               <div>
 
@@ -1582,7 +2098,7 @@ export default function MeetingDetails() {
                 </h2>
 
                 <p className="text-sm text-slate-500 mt-1">
-                  Search and filter the meeting conversation
+                  Search and explore the meeting conversation
                 </p>
 
               </div>
@@ -1591,14 +2107,8 @@ export default function MeetingDetails() {
               {hasTranscript && (
                 <div className="text-sm text-slate-500">
                   Showing{" "}
-                  <span className="font-medium text-slate-900">
-                    {filteredSegments.length}
-                  </span>{" "}
-                  of{" "}
-                  <span className="font-medium text-slate-900">
-                    {transcript.segments.length}
-                  </span>{" "}
-                  segments
+                  {filteredSegments.length} of{" "}
+                  {transcriptSegments.length} segments
                 </div>
               )}
 
@@ -1608,11 +2118,11 @@ export default function MeetingDetails() {
             {hasTranscript && (
               <div className="flex flex-col md:flex-row gap-3 mt-5">
 
-                {/* SEARCH */}
+                {/* Search */}
 
                 <div className="relative flex-1">
 
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
 
                   <input
                     type="text"
@@ -1623,46 +2133,40 @@ export default function MeetingDetails() {
                       )
                     }
                     placeholder="Search transcript..."
-                    className="w-full pl-10 pr-4 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-slate-200"
+                    className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-slate-200"
                   />
 
                 </div>
 
 
-                {/* SPEAKER FILTER */}
+                {/* Speaker */}
 
-                <div className="relative">
+                <select
+                  value={selectedSpeaker}
+                  onChange={(e) =>
+                    setSelectedSpeaker(
+                      e.target.value
+                    )
+                  }
+                  className="md:w-56 px-4 py-3 border border-slate-200 rounded-xl bg-white outline-none"
+                >
 
-                  <select
-                    value={selectedSpeaker}
-                    onChange={(e) =>
-                      setSelectedSpeaker(
-                        e.target.value
-                      )
-                    }
-                    className="appearance-none w-full md:w-52 border border-slate-300 rounded-lg pl-4 pr-9 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-slate-200"
-                  >
+                  <option value="ALL">
+                    All speakers
+                  </option>
 
-                    <option value="ALL">
-                      All Speakers
-                    </option>
+                  {speakers.map(
+                    (speaker) => (
+                      <option
+                        key={speaker}
+                        value={speaker}
+                      >
+                        {speaker}
+                      </option>
+                    )
+                  )}
 
-                    {speakers.map(
-                      (speaker) => (
-                        <option
-                          key={speaker}
-                          value={speaker}
-                        >
-                          {speaker}
-                        </option>
-                      )
-                    )}
-
-                  </select>
-
-                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
-
-                </div>
+                </select>
 
               </div>
             )}
@@ -1674,34 +2178,15 @@ export default function MeetingDetails() {
 
             <div className="p-12 text-center">
 
-              <MessageSquareText className="w-12 h-12 text-slate-300 mx-auto mb-4" />
+              <FileText className="w-10 h-10 text-slate-300 mx-auto" />
 
-              <h3 className="text-lg font-semibold text-slate-900">
-                No transcript available
+              <h3 className="font-semibold text-slate-900 mt-4">
+                Transcript not available
               </h3>
 
-              <p className="text-sm text-slate-500 mt-2 mb-5">
-                Transcribe the meeting audio to see the conversation here.
+              <p className="text-sm text-slate-500 mt-2">
+                Transcribe the meeting to view its conversation.
               </p>
-
-              <button
-                onClick={handleTranscribe}
-                disabled={
-                  transcribing ||
-                  !meeting.audio_path
-                }
-                className="inline-flex items-center gap-2 px-4 py-2.5 bg-slate-900 text-white rounded-lg hover:bg-slate-800 disabled:opacity-50"
-              >
-                {transcribing ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <MessageSquareText className="w-4 h-4" />
-                )}
-
-                {transcribing
-                  ? "Transcribing..."
-                  : "Transcribe Meeting"}
-              </button>
 
             </div>
 
@@ -1709,14 +2194,10 @@ export default function MeetingDetails() {
 
             <div className="p-12 text-center">
 
-              <Search className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+              <Search className="w-8 h-8 text-slate-300 mx-auto" />
 
-              <h3 className="font-semibold text-slate-900">
-                No matching transcript
-              </h3>
-
-              <p className="text-sm text-slate-500 mt-1">
-                Try a different search term or speaker.
+              <p className="text-slate-500 mt-3">
+                No transcript segments match your filters.
               </p>
 
               <button
@@ -1724,7 +2205,7 @@ export default function MeetingDetails() {
                   setSearchQuery("");
                   setSelectedSpeaker("ALL");
                 }}
-                className="mt-4 text-sm font-medium text-slate-700 hover:text-slate-900 underline"
+                className="mt-4 text-sm font-medium text-slate-900 hover:underline"
               >
                 Clear filters
               </button>
@@ -1750,45 +2231,51 @@ export default function MeetingDetails() {
 
                       <div className="flex gap-4">
 
-                        {/* TIMESTAMP */}
+                        {/* Timestamp */}
 
-                        <div className="flex-shrink-0">
-
-                          <button
-                            className="px-2.5 py-1 bg-slate-100 text-slate-600 rounded-md text-xs font-mono hover:bg-slate-200"
-                            title="Transcript timestamp"
-                          >
-                            {formatTimestamp(
-                              segment.start
-                            )}
-                          </button>
-
-                        </div>
+                        <button
+                          type="button"
+                          title="Jump to timestamp"
+                          className="shrink-0 flex items-center gap-1 text-xs font-medium text-slate-500 hover:text-slate-900"
+                        >
+                          <Clock3 className="w-4 h-4" />
+                          {formatTimestamp(
+                            segment.start
+                          )}
+                        </button>
 
 
-                        {/* CONTENT */}
+                        {/* Content */}
 
-                        <div className="flex-1 min-w-0">
+                        <div className="min-w-0">
 
-                          <div className="flex items-center gap-2 mb-1.5">
+                          <div className="flex items-center gap-2 mb-2">
 
-                            <span className="text-sm font-semibold text-slate-900">
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-100 text-xs font-medium text-slate-700">
+
+                              <User className="w-3.5 h-3.5" />
+
                               {speaker}
+
                             </span>
 
-                            {segment.end != null && (
-                              <span className="text-xs text-slate-400">
-                                {formatTimestamp(
-                                  segment.end
-                                )}
-                              </span>
-                            )}
+                            <span className="text-xs text-slate-400">
+                              →
+                            </span>
+
+                            <span className="text-xs text-slate-400">
+                              {formatTimestamp(
+                                segment.end
+                              )}
+                            </span>
 
                           </div>
 
-                          <p className="text-slate-700 leading-7">
+
+                          <p className="text-sm text-slate-700 leading-7">
                             {highlightText(
-                              segment.text || ""
+                              segment.text ||
+                                ""
                             )}
                           </p>
 
@@ -1808,22 +2295,29 @@ export default function MeetingDetails() {
         </section>
 
 
-        {/* RAW TRANSCRIPT FALLBACK */}
+        {/* Bottom Refresh */}
 
-        {!hasTranscript &&
-          transcript?.content && (
-            <section className="bg-white border border-slate-200 rounded-2xl p-6 mt-8 shadow-sm">
+        <div className="flex justify-center mt-8">
 
-              <h2 className="text-lg font-semibold text-slate-900 mb-4">
-                Transcript Text
-              </h2>
+          <button
+            onClick={fetchMeetingData}
+            disabled={loading}
+            className="flex items-center gap-2 px-4 py-2.5 border border-slate-200 bg-white rounded-xl text-sm text-slate-600 hover:bg-slate-50 transition disabled:opacity-50"
+          >
 
-              <p className="whitespace-pre-line text-slate-700 leading-7">
-                {transcript.content}
-              </p>
+            <RefreshCw
+              className={`w-4 h-4 ${
+                loading
+                  ? "animate-spin"
+                  : ""
+              }`}
+            />
 
-            </section>
-          )}
+            Refresh Meeting Data
+
+          </button>
+
+        </div>
 
       </main>
 
@@ -1831,3 +2325,4 @@ export default function MeetingDetails() {
   );
 }
 
+export default MeetingDetails;

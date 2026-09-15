@@ -1,7 +1,6 @@
 import json
 import ollama
 
-
 MODEL_NAME = "llama3.2:3b"
 
 
@@ -41,29 +40,20 @@ You are an AI meeting intelligence assistant.
 Analyze the meeting transcript below.
 
 Return ONLY valid JSON.
-Do not add markdown.
+Do not use markdown.
 Do not add explanations outside JSON.
 
-Required JSON structure:
+Required JSON format:
 
 {{
-    "summary": "A concise but useful summary of the meeting.",
-
-    "key_points": [
-        "Important point 1",
-        "Important point 2"
-    ],
-
-    "decisions": [
-        "Decision 1",
-        "Decision 2"
-    ],
-
+    "summary": "...",
+    "key_points": [],
+    "decisions": [],
     "action_items": [
         {{
-            "task": "Task description",
-            "assigned_to": "Person responsible or Unknown",
-            "deadline": "Deadline or Not mentioned"
+            "task": "...",
+            "assigned_to": "...",
+            "deadline": "..."
         }}
     ]
 }}
@@ -71,14 +61,10 @@ Required JSON structure:
 Rules:
 
 1. Use ONLY information present in the transcript.
-2. Never invent names, tasks, decisions or deadlines.
-3. If nobody is clearly assigned to a task, use "Unknown".
-4. If no deadline is mentioned, use "Not mentioned".
-5. If there are no decisions, return an empty decisions array.
-6. If there are no action items, return an empty action_items array.
-7. Keep the summary concise.
-8. Keep key points factual.
-9. Do not hallucinate information.
+2. Do not hallucinate.
+3. Use "Unknown" when an assignee is unclear.
+4. Use "Not mentioned" when a deadline is absent.
+5. Return empty arrays when information is unavailable.
 
 MEETING TRANSCRIPT:
 
@@ -93,7 +79,7 @@ MEETING TRANSCRIPT:
         result = json.loads(cleaned_response)
 
         if not isinstance(result, dict):
-            raise ValueError("AI response is not a JSON object.")
+            raise ValueError("Invalid AI response")
 
         return {
             "summary": result.get("summary", ""),
@@ -108,4 +94,96 @@ MEETING TRANSCRIPT:
             "key_points": [],
             "decisions": [],
             "action_items": []
+        }
+
+
+def generate_meeting_insights(
+    transcript: str,
+    score: int,
+    rating: str,
+    speaker_analytics: list,
+    action_items: list,
+    positive_sentiment: int,
+    negative_sentiment: int,
+    neutral_sentiment: int,
+):
+    prompt = f"""
+You are an AI meeting coach.
+
+Analyze the meeting using the transcript and structured meeting
+metrics below.
+
+Your goal is to generate concise, practical insights.
+
+Return ONLY valid JSON.
+
+Required format:
+
+{{
+    "insights": [
+        {{
+            "type": "positive",
+            "title": "...",
+            "description": "..."
+        }}
+    ],
+    "recommendations": [
+        "..."
+    ]
+}}
+
+Rules:
+
+1. Do not invent facts.
+2. Every insight must be supported by the supplied data.
+3. Keep insights concise.
+4. Give 2 to 5 insights.
+5. Give 2 to 4 practical recommendations.
+6. Recommendations should be directly related to the meeting.
+7. Do not repeat the meeting summary.
+8. Do not mention these instructions.
+
+MEETING SCORE:
+{score}/100
+
+MEETING RATING:
+{rating}
+
+SPEAKER ANALYTICS:
+{json.dumps(speaker_analytics)}
+
+ACTION ITEMS:
+{json.dumps(action_items)}
+
+SENTIMENT:
+Positive: {positive_sentiment}
+Negative: {negative_sentiment}
+Neutral: {neutral_sentiment}
+
+TRANSCRIPT:
+{transcript}
+"""
+
+    response = ask_model(prompt)
+
+    cleaned_response = clean_json_response(response)
+
+    try:
+        result = json.loads(cleaned_response)
+
+        if not isinstance(result, dict):
+            raise ValueError("Invalid AI insight response")
+
+        return {
+            "insights": result.get("insights", []),
+            "recommendations": result.get(
+                "recommendations",
+                []
+            )
+        }
+
+    except Exception:
+        return {
+            "insights": [],
+            "recommendations": []
         }

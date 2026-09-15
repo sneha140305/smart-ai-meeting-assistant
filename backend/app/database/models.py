@@ -166,6 +166,21 @@ class Meeting(Base):
         cascade="all, delete-orphan"
     )
 
+    effectiveness_score = Column(
+        Integer,
+        nullable=True
+    )
+    effectiveness_rating = Column(
+        String,
+        nullable=True
+    )
+
+    meeting_insights = Column(Text, nullable=True)
+    meeting_recommendations = Column(
+        Text,
+        nullable=True
+    )
+
 
 class Transcript(Base):
     __tablename__ = "transcripts"

@@ -21,4 +21,7 @@ class MeetingResponse(BaseModel):
     negative_sentiment: int | None = None
     neutral_sentiment: int | None = None
 
+    effectiveness_score: int | None = None
+    effectiveness_rating: str | None = None
+
     model_config = ConfigDict(from_attributes=True)
