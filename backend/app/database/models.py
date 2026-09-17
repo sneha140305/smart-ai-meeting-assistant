@@ -264,6 +264,12 @@ class ActionItem(Base):
         back_populates="action_items"
     )
 
+    priority = Column(
+    String,
+    default="medium",
+    nullable=False
+    )
+
 
 class SpeakerAnalytics(Base):
     __tablename__ = "speaker_analytics"

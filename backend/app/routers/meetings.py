@@ -819,21 +819,31 @@ def get_action_items(
 def update_action_item(
     meeting_id: int,
     action_item_id: int,
-    status: str,
+    status: str | None = None,
+    priority: str | None = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user)
 ):
-    meeting = get_owned_meeting(
-        meeting_id,
-        current_user,
-        db,
+    meeting = (
+        db.query(Meeting)
+        .filter(
+            Meeting.id == meeting_id,
+            Meeting.owner_id == current_user.id
+        )
+        .first()
     )
+
+    if not meeting:
+        raise HTTPException(
+            status_code=404,
+            detail="Meeting not found"
+        )
 
     action_item = (
         db.query(ActionItem)
         .filter(
             ActionItem.id == action_item_id,
-            ActionItem.meeting_id == meeting.id,
+            ActionItem.meeting_id == meeting_id
         )
         .first()
     )
@@ -841,25 +851,40 @@ def update_action_item(
     if not action_item:
         raise HTTPException(
             status_code=404,
-            detail="Action item not found.",
+            detail="Action item not found"
         )
 
-    allowed_statuses = [
-        "pending",
-        "in_progress",
-        "completed",
-    ]
+    if status is not None:
 
-    if status not in allowed_statuses:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Status must be one of: "
-                + ", ".join(allowed_statuses)
-            ),
-        )
+        allowed_statuses = [
+            "pending",
+            "in_progress",
+            "completed"
+        ]
 
-    action_item.status = status
+        if status not in allowed_statuses:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid status"
+            )
+
+        action_item.status = status
+
+    if priority is not None:
+
+        allowed_priorities = [
+            "low",
+            "medium",
+            "high"
+        ]
+
+        if priority not in allowed_priorities:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid priority"
+            )
+
+        action_item.priority = priority
 
     db.commit()
     db.refresh(action_item)
@@ -869,8 +894,9 @@ def update_action_item(
         "task": action_item.task,
         "assigned_to": action_item.assigned_to,
         "deadline": action_item.deadline,
+        "priority": action_item.priority,
         "status": action_item.status,
-        "meeting_id": action_item.meeting_id,
+        "meeting_id": action_item.meeting_id
     }
 
 

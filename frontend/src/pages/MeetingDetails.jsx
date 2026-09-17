@@ -6,19 +6,21 @@ import {
   BarChart3,
   CalendarDays,
   CheckCircle2,
+  ChevronDown,
+  Clock,
   Clock3,
+  FileAudio,
   FileText,
   Loader2,
-  MessageSquareText,
   Play,
+  RefreshCw,
   Search,
   Sparkles,
   TrendingUp,
   User,
   Users,
   Video,
-  AlertCircle,
-  RefreshCw,
+  XCircle,
 } from "lucide-react";
 
 import api from "../services/api";
@@ -29,59 +31,86 @@ function MeetingDetails() {
   const navigate = useNavigate();
 
   const [meeting, setMeeting] = useState(null);
+
   const [transcript, setTranscript] = useState(null);
+
   const [actionItems, setActionItems] = useState([]);
+
   const [speakerAnalytics, setSpeakerAnalytics] = useState([]);
 
   const [analytics, setAnalytics] = useState(null);
+
   const [meetingScore, setMeetingScore] = useState(null);
 
   const [insights, setInsights] = useState([]);
+
   const [recommendations, setRecommendations] = useState([]);
 
   const [loading, setLoading] = useState(true);
-  const [actionLoading, setActionLoading] = useState(false);
 
   const [processing, setProcessing] = useState(false);
-  const [processingStep, setProcessingStep] = useState("");
 
   const [error, setError] = useState("");
 
+  const [message, setMessage] = useState("");
+
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedSpeaker, setSelectedSpeaker] = useState("ALL");
 
-  const [updatingActionId, setUpdatingActionId] = useState(null);
+  const [selectedSpeaker, setSelectedSpeaker] =
+    useState("ALL");
 
-
-  // ---------------------------------------------
-  // Helpers
-  // ---------------------------------------------
+  const [actionFilter, setActionFilter] =
+    useState("all");
 
   const parseJson = (value, fallback = []) => {
-    if (!value) return fallback;
+    if (!value) {
+      return fallback;
+    }
 
     if (Array.isArray(value)) {
       return value;
     }
 
     try {
-      const parsed = JSON.parse(value);
-
-      return parsed ?? fallback;
+      return JSON.parse(value);
     } catch {
       return fallback;
     }
   };
 
 
-  const formatTimestamp = (seconds) => {
+  const formatDate = (value) => {
+    if (!value) {
+      return "Unknown date";
+    }
+
+    try {
+      return new Date(value).toLocaleDateString(
+        "en-IN",
+        {
+          day: "2-digit",
+          month: "short",
+          year: "numeric",
+        }
+      );
+    } catch {
+      return "Unknown date";
+    }
+  };
+
+
+  const formatTime = (seconds) => {
     const totalSeconds = Math.max(
       0,
       Math.floor(Number(seconds) || 0)
     );
 
-    const minutes = Math.floor(totalSeconds / 60);
-    const remainingSeconds = totalSeconds % 60;
+    const minutes = Math.floor(
+      totalSeconds / 60
+    );
+
+    const remainingSeconds =
+      totalSeconds % 60;
 
     return `${minutes}:${String(
       remainingSeconds
@@ -89,50 +118,42 @@ function MeetingDetails() {
   };
 
 
-  const formatDate = (dateString) => {
-    if (!dateString) return "Unknown date";
-
-    return new Date(dateString).toLocaleString(
-      "en-IN",
-      {
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      }
+  const formatDuration = (seconds) => {
+    const totalSeconds = Math.max(
+      0,
+      Math.floor(Number(seconds) || 0)
     );
-  };
 
+    const hours = Math.floor(
+      totalSeconds / 3600
+    );
 
-  const formatDuration = (duration) => {
-    if (!duration) return "Unavailable";
-
-    const totalSeconds = Number(duration);
-
-    const hours = Math.floor(totalSeconds / 3600);
     const minutes = Math.floor(
       (totalSeconds % 3600) / 60
     );
-    const seconds = totalSeconds % 60;
+
+    const remainingSeconds =
+      totalSeconds % 60;
 
     if (hours > 0) {
-      return `${hours}h ${minutes}m ${seconds}s`;
+      return `${hours}h ${minutes}m`;
     }
 
-    return `${minutes}m ${seconds}s`;
+    return `${minutes}m ${remainingSeconds}s`;
   };
 
 
   const getStatusLabel = (status) => {
     const labels = {
-      completed: "Completed",
-      processing: "Processing",
+      uploaded: "Uploaded",
       preprocessing: "Preparing",
       audio_ready: "Audio Ready",
+      processing: "Processing",
       transcribing: "Transcribing",
+      transcribed: "Transcribed",
       diarizing: "Identifying Speakers",
       analyzing: "Analyzing",
+      completed: "Completed",
       diarization_failed: "Diarization Failed",
       analysis_failed: "Analysis Failed",
     };
@@ -150,7 +171,6 @@ function MeetingDetails() {
       [
         "processing",
         "preprocessing",
-        "audio_ready",
         "transcribing",
         "diarizing",
         "analyzing",
@@ -171,71 +191,21 @@ function MeetingDetails() {
     return "bg-slate-50 text-slate-600 border-slate-200";
   };
 
-
-  const getSentimentPercentage = (value) => {
-    const total =
-      (analytics?.positive || 0) +
-      (analytics?.negative || 0) +
-      (analytics?.neutral || 0);
-
-    if (!total) return 0;
-
-    return Math.round((value / total) * 100);
-  };
-
-
-  const getSpeakerPercentage = (wordCount) => {
-    const totalWords = speakerAnalytics.reduce(
-      (total, speaker) =>
-        total + (speaker.word_count || 0),
-      0
-    );
-
-    if (!totalWords) return 0;
-
-    return Math.round(
-      ((wordCount || 0) / totalWords) * 100
-    );
-  };
-
-
-  const getInsightIcon = (type) => {
-    if (type === "warning") {
-      return (
-        <AlertCircle className="w-5 h-5 text-amber-500" />
-      );
-    }
-
-    if (type === "negative") {
-      return (
-        <AlertCircle className="w-5 h-5 text-red-500" />
-      );
-    }
-
-    return (
-      <CheckCircle2 className="w-5 h-5 text-green-600" />
-    );
-  };
-
-
-  // ---------------------------------------------
-  // Load Meeting Data
-  // ---------------------------------------------
-
   const fetchMeetingData = async () => {
     try {
       setLoading(true);
       setError("");
 
-      const meetingResponse = await api.get(
-        `/meetings/${meetingId}`
-      );
+      const meetingResponse =
+        await api.get(
+          `/meetings/${meetingId}`
+        );
 
-      const meetingData = meetingResponse.data;
+      const meetingData =
+        meetingResponse.data;
 
       setMeeting(meetingData);
 
-      // Analytics
       setAnalytics({
         totalWords:
           meetingData.total_words || 0,
@@ -253,97 +223,101 @@ function MeetingDetails() {
           meetingData.neutral_sentiment || 0,
       });
 
-
-      // Effectiveness score
       if (
-        meetingData.effectiveness_score !== null &&
-        meetingData.effectiveness_score !== undefined
+        meetingData.effectiveness_score !==
+        null &&
+        meetingData.effectiveness_score !==
+        undefined
       ) {
         setMeetingScore({
-          score: meetingData.effectiveness_score,
+          score:
+            meetingData.effectiveness_score,
+
           rating:
             meetingData.effectiveness_rating ||
             "",
         });
-      } else {
-        setMeetingScore(null);
       }
 
-
-      // Stored AI insights
       setInsights(
         parseJson(
-          meetingData.meeting_insights,
-          []
+          meetingData.meeting_insights
         )
       );
 
       setRecommendations(
         parseJson(
-          meetingData.meeting_recommendations,
-          []
+          meetingData.meeting_recommendations
         )
       );
 
-
-      // Transcript
       try {
-        const transcriptResponse = await api.get(
-          `/meetings/${meetingId}/transcript`
-        );
+        const transcriptResponse =
+          await api.get(
+            `/meetings/${meetingId}/transcript`
+          );
 
-        setTranscript(
-          transcriptResponse.data
-        );
+        const transcriptData =
+          transcriptResponse.data;
+
+        setTranscript({
+          ...transcriptData,
+
+          segments: Array.isArray(
+            transcriptData.segments
+          )
+            ? transcriptData.segments
+            : parseJson(
+                transcriptData.segments
+              ),
+        });
       } catch (transcriptError) {
         console.log(
-          "Transcript not available yet.",
+          "Transcript not available yet:",
           transcriptError
         );
 
         setTranscript(null);
       }
 
-
-      // Action items
       try {
-        setActionLoading(true);
-
-        const actionResponse = await api.get(
-          `/meetings/${meetingId}/action-items`
-        );
+        const actionResponse =
+          await api.get(
+            `/meetings/${meetingId}/action-items`
+          );
 
         setActionItems(
-          Array.isArray(actionResponse.data)
+          Array.isArray(
+            actionResponse.data
+          )
             ? actionResponse.data
             : []
         );
       } catch (actionError) {
         console.log(
-          "Action items not available yet.",
+          "Action items not available:",
           actionError
         );
 
         setActionItems([]);
-      } finally {
-        setActionLoading(false);
       }
 
-
-      // Speaker analytics
       try {
-        const speakerResponse = await api.get(
-          `/meetings/${meetingId}/speaker-analytics`
-        );
+        const speakerResponse =
+          await api.get(
+            `/meetings/${meetingId}/speaker-analytics`
+          );
 
         setSpeakerAnalytics(
-          Array.isArray(speakerResponse.data)
+          Array.isArray(
+            speakerResponse.data
+          )
             ? speakerResponse.data
             : []
         );
       } catch (speakerError) {
         console.log(
-          "Speaker analytics not available yet.",
+          "Speaker analytics not available:",
           speakerError
         );
 
@@ -358,7 +332,7 @@ function MeetingDetails() {
 
       setError(
         err.response?.data?.detail ||
-          "Unable to load meeting."
+          "Unable to load this meeting."
       );
     } finally {
       setLoading(false);
@@ -370,59 +344,389 @@ function MeetingDetails() {
     fetchMeetingData();
   }, [meetingId]);
 
+  const runTranscription = async () => {
+    try {
+      setProcessing(true);
+      setMessage("");
+      setError("");
 
-  // ---------------------------------------------
-  // Transcript
-  // ---------------------------------------------
+      await api.post(
+        `/meetings/${meetingId}/transcribe`
+      );
 
-  const transcriptSegments = useMemo(() => {
-    if (!transcript) return [];
+      setMessage(
+        "Transcription completed successfully."
+      );
 
-    if (Array.isArray(transcript.segments)) {
-      return transcript.segments;
+      await fetchMeetingData();
+
+    } catch (err) {
+      console.error(
+        "Transcription failed:",
+        err
+      );
+
+      setError(
+        err.response?.data?.detail ||
+          "Transcription failed."
+      );
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+
+  const runDiarization = async () => {
+    try {
+      setProcessing(true);
+      setMessage("");
+      setError("");
+
+      await api.post(
+        `/meetings/${meetingId}/diarize`
+      );
+
+      setMessage(
+        "Speaker identification completed."
+      );
+
+      await fetchMeetingData();
+
+    } catch (err) {
+      console.error(
+        "Diarization failed:",
+        err
+      );
+
+      setError(
+        err.response?.data?.detail ||
+          "Speaker identification failed."
+      );
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+
+  const runAnalysis = async () => {
+    try {
+      setProcessing(true);
+      setMessage("");
+      setError("");
+
+      const response =
+        await api.post(
+          `/meetings/${meetingId}/analyze`
+        );
+
+      const data = response.data;
+
+      // AI results
+
+      if (data.meeting_score) {
+        setMeetingScore(
+          data.meeting_score
+        );
+      }
+
+      setInsights(
+        data.insights || []
+      );
+
+      setRecommendations(
+        data.recommendations || []
+      );
+
+      setMessage(
+        "AI meeting analysis completed."
+      );
+
+      await fetchMeetingData();
+
+    } catch (err) {
+      console.error(
+        "Analysis failed:",
+        err
+      );
+
+      setError(
+        err.response?.data?.detail ||
+          "Meeting analysis failed."
+      );
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const updateActionItemStatus = async (
+    actionItemId,
+    status
+  ) => {
+    try {
+      setError("");
+
+      await api.patch(
+        `/meetings/${meetingId}/action-items/${actionItemId}`,
+        null,
+        {
+          params: {
+            status,
+          },
+        }
+      );
+
+      setActionItems((currentItems) =>
+        currentItems.map((item) =>
+          item.id === actionItemId
+            ? {
+                ...item,
+                status,
+              }
+            : item
+        )
+      );
+
+    } catch (err) {
+      console.error(
+        "Failed to update action item:",
+        err
+      );
+
+      setError(
+        err.response?.data?.detail ||
+          "Failed to update action item."
+      );
+    }
+  };
+
+
+  const updateActionItemPriority = async (
+    actionItemId,
+    priority
+  ) => {
+    try {
+      setError("");
+
+      await api.patch(
+        `/meetings/${meetingId}/action-items/${actionItemId}`,
+        null,
+        {
+          params: {
+            priority,
+          },
+        }
+      );
+
+      setActionItems((currentItems) =>
+        currentItems.map((item) =>
+          item.id === actionItemId
+            ? {
+                ...item,
+                priority,
+              }
+            : item
+        )
+      );
+
+    } catch (err) {
+      console.error(
+        "Failed to update priority:",
+        err
+      );
+
+      setError(
+        err.response?.data?.detail ||
+          "Failed to update priority."
+      );
+    }
+  };
+
+  const isOverdue = (item) => {
+    if (
+      !item.deadline ||
+      item.deadline === "Not mentioned" ||
+      item.status === "completed"
+    ) {
+      return false;
     }
 
-    return parseJson(
-      transcript.segments,
-      []
+    const deadlineDate =
+      new Date(item.deadline);
+
+    if (
+      Number.isNaN(
+        deadlineDate.getTime()
+      )
+    ) {
+      return false;
+    }
+
+    return deadlineDate < new Date();
+  };
+
+
+  const getPriorityClass = (
+    priority
+  ) => {
+    switch (priority) {
+      case "high":
+        return "bg-red-50 text-red-700 border-red-200";
+
+      case "medium":
+        return "bg-amber-50 text-amber-700 border-amber-200";
+
+      case "low":
+        return "bg-green-50 text-green-700 border-green-200";
+
+      default:
+        return "bg-slate-50 text-slate-600 border-slate-200";
+    }
+  };
+
+
+  const completedCount =
+    actionItems.filter(
+      (item) =>
+        item.status === "completed"
+    ).length;
+
+
+  const pendingCount =
+    actionItems.filter(
+      (item) =>
+        item.status === "pending"
+    ).length;
+
+
+  const inProgressCount =
+    actionItems.filter(
+      (item) =>
+        item.status === "in_progress"
+    ).length;
+
+
+  const overdueCount =
+    actionItems.filter(
+      (item) => isOverdue(item)
+    ).length;
+
+
+  const actionCompletionRate =
+    actionItems.length
+      ? Math.round(
+          (completedCount /
+            actionItems.length) *
+            100
+        )
+      : 0;
+
+
+  const filteredActionItems =
+    actionItems.filter((item) => {
+      if (actionFilter === "all") {
+        return true;
+      }
+
+      if (actionFilter === "overdue") {
+        return isOverdue(item);
+      }
+
+      return (
+        item.status === actionFilter
+      );
+    });
+
+  const getSpeakerPercentage = (
+    wordCount
+  ) => {
+    const totalWords =
+      speakerAnalytics.reduce(
+        (total, speaker) =>
+          total +
+          Number(
+            speaker.word_count || 0
+          ),
+        0
+      );
+
+    if (!totalWords) {
+      return 0;
+    }
+
+    return Math.round(
+      ((wordCount || 0) /
+        totalWords) *
+        100
     );
-  }, [transcript]);
+  };
 
 
-  const hasTranscript =
-    transcriptSegments.length > 0;
+  const dominantSpeaker =
+    speakerAnalytics.length
+      ? [...speakerAnalytics].sort(
+          (a, b) =>
+            Number(
+              b.word_count || 0
+            ) -
+            Number(
+              a.word_count || 0
+            )
+        )[0]
+      : null;
+
+  const getSentimentPercentage = (
+    value
+  ) => {
+    const total =
+      (analytics?.positive || 0) +
+      (analytics?.negative || 0) +
+      (analytics?.neutral || 0);
+
+    if (!total) {
+      return 0;
+    }
+
+    return Math.round(
+      (value / total) * 100
+    );
+  };
+
+  const transcriptSegments =
+    transcript?.segments || [];
 
 
   const speakers = useMemo(() => {
-    if (!hasTranscript) return [];
-
     return [
       ...new Set(
         transcriptSegments.map(
           (segment) =>
-            segment.speaker || "UNKNOWN"
+            segment.speaker ||
+            "UNKNOWN"
         )
       ),
     ];
-  }, [transcriptSegments, hasTranscript]);
+  }, [transcriptSegments]);
 
 
   const filteredSegments = useMemo(() => {
-    if (!hasTranscript) return [];
-
     const query =
-      searchQuery.trim().toLowerCase();
+      searchQuery
+        .trim()
+        .toLowerCase();
 
     return transcriptSegments.filter(
       (segment) => {
         const text =
-          segment.text?.toLowerCase() || "";
+          segment.text?.toLowerCase() ||
+          "";
 
         const speaker =
-          segment.speaker || "UNKNOWN";
+          segment.speaker ||
+          "UNKNOWN";
 
         const matchesSearch =
-          !query || text.includes(query);
+          !query ||
+          text.includes(query);
 
         const matchesSpeaker =
           selectedSpeaker === "ALL" ||
@@ -436,7 +740,6 @@ function MeetingDetails() {
     );
   }, [
     transcriptSegments,
-    hasTranscript,
     searchQuery,
     selectedSpeaker,
   ]);
@@ -471,300 +774,10 @@ function MeetingDetails() {
             {part}
           </mark>
         ) : (
-          <span key={index}>
-            {part}
-          </span>
+          part
         )
     );
   };
-
-
-  // ---------------------------------------------
-  // Action Items
-  // ---------------------------------------------
-
-  const updateActionItemStatus = async (
-    actionItemId,
-    status
-  ) => {
-    try {
-      setUpdatingActionId(
-        actionItemId
-      );
-
-      await api.patch(
-        `/meetings/${meetingId}/action-items/${actionItemId}`,
-        null,
-        {
-          params: {
-            status,
-          },
-        }
-      );
-
-      setActionItems((currentItems) =>
-        currentItems.map((item) =>
-          item.id === actionItemId
-            ? {
-                ...item,
-                status,
-              }
-            : item
-        )
-      );
-    } catch (err) {
-      console.error(
-        "Failed to update action item:",
-        err
-      );
-
-      alert(
-        err.response?.data?.detail ||
-          "Failed to update action item."
-      );
-    } finally {
-      setUpdatingActionId(null);
-    }
-  };
-
-
-  const completedActionItems =
-    actionItems.filter(
-      (item) =>
-        item.status === "completed"
-    ).length;
-
-
-  const actionCompletionRate =
-    actionItems.length
-      ? Math.round(
-          (completedActionItems /
-            actionItems.length) *
-            100
-        )
-      : 0;
-
-
-  // ---------------------------------------------
-  // Dominant Speaker
-  // ---------------------------------------------
-
-  const dominantSpeaker =
-    speakerAnalytics.length
-      ? [...speakerAnalytics].sort(
-          (a, b) =>
-            (b.word_count || 0) -
-            (a.word_count || 0)
-        )[0]
-      : null;
-
-
-  // ---------------------------------------------
-  // Processing
-  // ---------------------------------------------
-
-  const runTranscription = async () => {
-    try {
-      setProcessing(true);
-      setProcessingStep(
-        "Converting speech to text..."
-      );
-      setError("");
-
-      await api.post(
-        `/meetings/${meetingId}/transcribe`
-      );
-
-      await fetchMeetingData();
-
-    } catch (err) {
-      console.error(err);
-
-      setError(
-        err.response?.data?.detail ||
-          "Transcription failed."
-      );
-    } finally {
-      setProcessing(false);
-      setProcessingStep("");
-    }
-  };
-
-
-  const runDiarization = async () => {
-    try {
-      setProcessing(true);
-      setProcessingStep(
-        "Identifying speakers..."
-      );
-      setError("");
-
-      await api.post(
-        `/meetings/${meetingId}/diarize`
-      );
-
-      await fetchMeetingData();
-
-    } catch (err) {
-      console.error(err);
-
-      setError(
-        err.response?.data?.detail ||
-          "Speaker identification failed."
-      );
-    } finally {
-      setProcessing(false);
-      setProcessingStep("");
-    }
-  };
-
-
-  const runAnalysis = async () => {
-    try {
-      setProcessing(true);
-      setProcessingStep(
-        "Generating AI meeting insights..."
-      );
-      setError("");
-
-      const response = await api.post(
-        `/meetings/${meetingId}/analyze`
-      );
-
-      const result = response.data;
-
-      // AI analysis
-      if (result.summary) {
-        setMeeting((current) => ({
-          ...current,
-          summary: result.summary,
-        }));
-      }
-
-      // Score
-      if (result.meeting_score) {
-        setMeetingScore(
-          result.meeting_score
-        );
-      }
-
-      // Insights
-      setInsights(
-        result.insights || []
-      );
-
-      setRecommendations(
-        result.recommendations || []
-      );
-
-      // Analytics
-      if (result.analytics) {
-        setAnalytics({
-          totalWords:
-            result.analytics.total_words ||
-            0,
-
-          speakerCount:
-            result.analytics.speaker_count ||
-            0,
-
-          positive:
-            result.analytics.positive_sentiment ||
-            0,
-
-          negative:
-            result.analytics.negative_sentiment ||
-            0,
-
-          neutral:
-            result.analytics.neutral_sentiment ||
-            0,
-        });
-      }
-
-      await fetchMeetingData();
-
-    } catch (err) {
-      console.error(err);
-
-      setError(
-        err.response?.data?.detail ||
-          "Meeting analysis failed."
-      );
-    } finally {
-      setProcessing(false);
-      setProcessingStep("");
-    }
-  };
-
-
-  // ---------------------------------------------
-  // Pipeline Button
-  // ---------------------------------------------
-
-  const getPrimaryAction = () => {
-    if (!meeting) return null;
-
-    if (
-      meeting.status === "audio_ready"
-    ) {
-      return {
-        label: "Transcribe Meeting",
-        action: runTranscription,
-      };
-    }
-
-    if (
-      meeting.status === "transcribed"
-    ) {
-      const hasSpeakers =
-        hasTranscript &&
-        transcriptSegments.some(
-          (segment) => segment.speaker
-        );
-
-      if (!hasSpeakers) {
-        return {
-          label: "Identify Speakers",
-          action: runDiarization,
-        };
-      }
-
-      return {
-        label: "Analyze Meeting",
-        action: runAnalysis,
-      };
-    }
-
-    if (
-      meeting.status === "diarization_failed"
-    ) {
-      return {
-        label: "Retry Speaker Identification",
-        action: runDiarization,
-      };
-    }
-
-    if (
-      meeting.status === "analysis_failed"
-    ) {
-      return {
-        label: "Retry AI Analysis",
-        action: runAnalysis,
-      };
-    }
-
-    return null;
-  };
-
-
-  const primaryAction =
-    getPrimaryAction();
-
-
-  // ---------------------------------------------
-  // Loading
-  // ---------------------------------------------
 
   if (loading) {
     return (
@@ -772,7 +785,7 @@ function MeetingDetails() {
 
         <div className="text-center">
 
-          <Loader2 className="w-8 h-8 animate-spin text-slate-600 mx-auto" />
+          <Loader2 className="w-8 h-8 animate-spin mx-auto text-slate-600" />
 
           <p className="text-slate-500 mt-3">
             Loading meeting...
@@ -784,40 +797,30 @@ function MeetingDetails() {
     );
   }
 
-
-  // ---------------------------------------------
-  // Error / No Meeting
-  // ---------------------------------------------
-
-  if (!meeting) {
+  if (error && !meeting) {
     return (
-      <div className="min-h-screen bg-slate-50">
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center px-6">
 
-        <div className="max-w-5xl mx-auto px-6 py-8">
+        <div className="bg-white border border-red-200 rounded-2xl p-8 max-w-md text-center">
+
+          <XCircle className="w-10 h-10 text-red-500 mx-auto" />
+
+          <h2 className="text-lg font-semibold text-slate-900 mt-4">
+            Unable to load meeting
+          </h2>
+
+          <p className="text-sm text-red-600 mt-2">
+            {error}
+          </p>
 
           <button
             onClick={() =>
               navigate("/dashboard")
             }
-            className="flex items-center gap-2 text-slate-600 hover:text-slate-900"
+            className="mt-5 px-5 py-2.5 bg-slate-900 text-white rounded-xl"
           >
-            <ArrowLeft className="w-5 h-5" />
             Back to Dashboard
           </button>
-
-          <div className="bg-white border border-red-200 rounded-2xl p-10 text-center mt-8">
-
-            <AlertCircle className="w-10 h-10 text-red-500 mx-auto" />
-
-            <h2 className="text-xl font-semibold text-slate-900 mt-4">
-              Meeting not found
-            </h2>
-
-            <p className="text-slate-500 mt-2">
-              {error || "Unable to load this meeting."}
-            </p>
-
-          </div>
 
         </div>
 
@@ -826,9 +829,9 @@ function MeetingDetails() {
   }
 
 
-  // ---------------------------------------------
-  // Main UI
-  // ---------------------------------------------
+  if (!meeting) {
+    return null;
+  }
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -839,56 +842,34 @@ function MeetingDetails() {
 
         <div className="max-w-7xl mx-auto px-6 py-4">
 
-          <button
-            onClick={() =>
-              navigate("/dashboard")
-            }
-            className="flex items-center gap-2 text-sm text-slate-500 hover:text-slate-900 mb-5"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Back to Dashboard
-          </button>
+          <div className="flex items-center justify-between gap-4">
+
+            <button
+              onClick={() =>
+                navigate("/dashboard")
+              }
+              className="flex items-center gap-2 text-slate-600 hover:text-slate-900 transition"
+            >
+              <ArrowLeft className="w-5 h-5" />
+
+              <span className="hidden sm:inline">
+                Dashboard
+              </span>
+            </button>
 
 
-          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5">
+            <button
+              onClick={() =>
+                fetchMeetingData()
+              }
+              className="flex items-center gap-2 px-3 py-2 border border-slate-200 rounded-xl hover:bg-slate-50 transition"
+            >
+              <RefreshCw className="w-4 h-4" />
 
-            <div>
-
-              <div className="flex items-center gap-3 flex-wrap">
-
-                <h1 className="text-2xl font-bold text-slate-900">
-                  {meeting.title ||
-                    "Untitled Meeting"}
-                </h1>
-
-                <span
-                  className={`px-3 py-1 rounded-full border text-xs font-medium ${getStatusClass(
-                    meeting.status
-                  )}`}
-                >
-                  {getStatusLabel(
-                    meeting.status
-                  )}
-                </span>
-
-              </div>
-
-              <p className="text-sm text-slate-500 mt-2">
-                {meeting.file_name}
-              </p>
-
-            </div>
-
-
-            {primaryAction && !processing && (
-              <button
-                onClick={primaryAction.action}
-                className="flex items-center justify-center gap-2 px-5 py-3 bg-slate-900 text-white rounded-xl hover:bg-slate-800 transition"
-              >
-                <Play className="w-4 h-4" />
-                {primaryAction.label}
-              </button>
-            )}
+              <span className="hidden sm:inline">
+                Refresh
+              </span>
+            </button>
 
           </div>
 
@@ -899,14 +880,27 @@ function MeetingDetails() {
 
       <main className="max-w-7xl mx-auto px-6 py-8">
 
-        {/* Error */}
+        {/* Notifications */}
+
+        {message && (
+          <div className="mb-5 flex items-center gap-3 bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-xl">
+
+            <CheckCircle2 className="w-5 h-5" />
+
+            <p className="text-sm">
+              {message}
+            </p>
+
+          </div>
+        )}
+
 
         {error && (
-          <div className="mb-6 bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-3">
+          <div className="mb-5 flex items-center gap-3 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl">
 
-            <AlertCircle className="w-5 h-5 text-red-500 mt-0.5" />
+            <XCircle className="w-5 h-5" />
 
-            <p className="text-sm text-red-700">
+            <p className="text-sm">
               {error}
             </p>
 
@@ -914,117 +908,214 @@ function MeetingDetails() {
         )}
 
 
-        {/* Processing */}
+        {/* Meeting Header */}
 
-        {processing && (
-          <div className="mb-6 bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+        <section className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm mb-8">
 
-            <div className="flex items-center gap-3">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
 
-              <Loader2 className="w-5 h-5 animate-spin text-slate-700" />
+            <div className="flex items-start gap-4">
+
+              <div className="w-14 h-14 bg-slate-100 rounded-2xl flex items-center justify-center shrink-0">
+
+                <Video className="w-7 h-7 text-slate-600" />
+
+              </div>
 
               <div>
 
-                <p className="font-medium text-slate-900">
-                  {processingStep}
-                </p>
+                <h1 className="text-2xl font-bold text-slate-900">
+                  {meeting.title ||
+                    "Untitled Meeting"}
+                </h1>
 
                 <p className="text-sm text-slate-500 mt-1">
-                  This may take some time depending on
-                  the length of the recording.
-                </p>
-
-              </div>
-
-            </div>
-
-          </div>
-        )}
-
-
-        {/* Meeting Metadata */}
-
-        <section className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-
-          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
-
-            <div className="flex items-center gap-3">
-
-              <div className="p-3 bg-slate-100 rounded-xl">
-                <CalendarDays className="w-5 h-5 text-slate-600" />
-              </div>
-
-              <div>
-
-                <p className="text-xs text-slate-500">
-                  Created
-                </p>
-
-                <p className="font-medium text-slate-900 mt-1">
-                  {formatDate(
-                    meeting.created_at
-                  )}
-                </p>
-
-              </div>
-
-            </div>
-
-          </div>
-
-
-          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
-
-            <div className="flex items-center gap-3">
-
-              <div className="p-3 bg-slate-100 rounded-xl">
-                <Clock3 className="w-5 h-5 text-slate-600" />
-              </div>
-
-              <div>
-
-                <p className="text-xs text-slate-500">
-                  Duration
-                </p>
-
-                <p className="font-medium text-slate-900 mt-1">
-                  {formatDuration(
-                    meeting.duration
-                  )}
-                </p>
-
-              </div>
-
-            </div>
-
-          </div>
-
-
-          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
-
-            <div className="flex items-center gap-3">
-
-              <div className="p-3 bg-slate-100 rounded-xl">
-                <FileText className="w-5 h-5 text-slate-600" />
-              </div>
-
-              <div>
-
-                <p className="text-xs text-slate-500">
-                  File
-                </p>
-
-                <p className="font-medium text-slate-900 mt-1 truncate max-w-[220px]">
                   {meeting.file_name}
                 </p>
 
+                <div className="flex flex-wrap items-center gap-4 mt-4 text-sm text-slate-500">
+
+                  <span className="flex items-center gap-1.5">
+                    <CalendarDays className="w-4 h-4" />
+                    {formatDate(
+                      meeting.created_at
+                    )}
+                  </span>
+
+                  <span className="flex items-center gap-1.5">
+                    <Clock className="w-4 h-4" />
+                    {formatDuration(
+                      meeting.duration
+                    )}
+                  </span>
+
+                </div>
+
               </div>
+
+            </div>
+
+
+            <div>
+
+              <span
+                className={`inline-flex px-4 py-2 rounded-full border text-sm font-medium ${getStatusClass(
+                  meeting.status
+                )}`}
+              >
+                {getStatusLabel(
+                  meeting.status
+                )}
+              </span>
 
             </div>
 
           </div>
 
         </section>
+
+
+        {/* Processing Controls */}
+
+        <section className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm mb-8">
+
+          <div className="flex items-center gap-3 mb-5">
+
+            <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center">
+
+              <Sparkles className="w-5 h-5 text-slate-700" />
+
+            </div>
+
+            <div>
+
+              <h2 className="text-xl font-semibold text-slate-900">
+                Meeting Processing
+              </h2>
+
+              <p className="text-sm text-slate-500 mt-1">
+                Process the meeting step by step
+              </p>
+
+            </div>
+
+          </div>
+
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+
+            {/* Transcribe */}
+
+            <button
+              disabled={
+                processing ||
+                ![
+                  "audio_ready",
+                  "processing",
+                  "transcribed",
+                  "diarizing",
+                  "analyzing",
+                  "completed",
+                ].includes(
+                  meeting.status
+                )
+              }
+              onClick={
+                runTranscription
+              }
+              className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-slate-900 text-white hover:bg-slate-800 transition disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {processing ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <FileText className="w-4 h-4" />
+              )}
+
+              Transcribe
+            </button>
+
+
+            {/* Diarize */}
+
+            <button
+              disabled={
+                processing ||
+                !transcriptSegments.length
+              }
+              onClick={
+                runDiarization
+              }
+              className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl border border-slate-300 bg-white text-slate-800 hover:bg-slate-50 transition disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {processing ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Users className="w-4 h-4" />
+              )}
+
+              Identify Speakers
+            </button>
+
+
+            {/* Analyze */}
+
+            <button
+              disabled={
+                processing ||
+                !transcriptSegments.length
+              }
+              onClick={
+                runAnalysis
+              }
+              className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-slate-900 text-white hover:bg-slate-800 transition disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {processing ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Sparkles className="w-4 h-4" />
+              )}
+
+              Analyze Meeting
+            </button>
+
+          </div>
+
+        </section>
+
+
+        {/* Summary */}
+
+        {meeting.summary && (
+          <section className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm mb-8">
+
+            <div className="flex items-center gap-3 mb-5">
+
+              <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center">
+
+                <FileText className="w-5 h-5 text-slate-700" />
+
+              </div>
+
+              <div>
+
+                <h2 className="text-xl font-semibold text-slate-900">
+                  AI Summary
+                </h2>
+
+                <p className="text-sm text-slate-500 mt-1">
+                  Concise overview of the meeting
+                </p>
+
+              </div>
+
+            </div>
+
+            <p className="text-slate-700 leading-7 whitespace-pre-line">
+              {meeting.summary}
+            </p>
+
+          </section>
+        )}
 
 
         {/* Meeting Effectiveness */}
@@ -1058,10 +1149,11 @@ function MeetingDetails() {
 
                 </div>
 
-                <p className="text-sm text-slate-500 mt-2 max-w-2xl">
+                <p className="text-sm text-slate-500 mt-2 max-w-xl">
                   Overall meeting quality based on
-                  participation, sentiment, action items,
-                  transcript quality and efficiency.
+                  participation, sentiment, action
+                  items, transcript quality and
+                  efficiency.
                 </p>
 
               </div>
@@ -1097,34 +1189,39 @@ function MeetingDetails() {
             {[
               [
                 "Participation",
-                meetingScore.breakdown.participation,
+                meetingScore.breakdown
+                  .participation,
                 25,
               ],
               [
                 "Sentiment",
-                meetingScore.breakdown.sentiment,
+                meetingScore.breakdown
+                  .sentiment,
                 20,
               ],
               [
                 "Action Items",
-                meetingScore.breakdown.action_items,
+                meetingScore.breakdown
+                  .action_items,
                 25,
               ],
               [
                 "Transcript",
-                meetingScore.breakdown.transcript_quality,
+                meetingScore.breakdown
+                  .transcript_quality,
                 20,
               ],
               [
                 "Efficiency",
-                meetingScore.breakdown.efficiency,
+                meetingScore.breakdown
+                  .efficiency,
                 10,
               ],
             ].map(
               ([label, value, max]) => {
 
                 const percentage =
-                  max > 0
+                  max
                     ? Math.round(
                         (value / max) *
                           100
@@ -1134,7 +1231,7 @@ function MeetingDetails() {
                 return (
                   <div
                     key={label}
-                    className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm"
+                    className="bg-white border border-slate-200 rounded-xl p-4"
                   >
 
                     <div className="flex justify-between gap-2">
@@ -1154,7 +1251,10 @@ function MeetingDetails() {
                       <div
                         className="bg-slate-800 h-2 rounded-full transition-all duration-500"
                         style={{
-                          width: `${percentage}%`,
+                          width: `${Math.min(
+                            100,
+                            percentage
+                          )}%`,
                         }}
                       />
 
@@ -1166,128 +1266,6 @@ function MeetingDetails() {
             )}
 
           </div>
-        )}
-
-
-        {/* AI Insights */}
-
-        {insights.length > 0 && (
-          <section className="bg-white border border-slate-200 rounded-2xl p-6 mb-8 shadow-sm">
-
-            <div className="flex items-center gap-3 mb-6">
-
-              <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center">
-                <TrendingUp className="w-5 h-5 text-slate-700" />
-              </div>
-
-              <div>
-
-                <h2 className="text-xl font-semibold text-slate-900">
-                  AI Meeting Insights
-                </h2>
-
-                <p className="text-sm text-slate-500 mt-1">
-                  What the AI found in this meeting
-                </p>
-
-              </div>
-
-            </div>
-
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-
-              {insights.map(
-                (insight, index) => (
-                  <div
-                    key={index}
-                    className="border border-slate-200 rounded-xl p-5"
-                  >
-
-                    <div className="flex items-start gap-3">
-
-                      <div className="mt-1">
-                        {getInsightIcon(
-                          insight.type
-                        )}
-                      </div>
-
-                      <div>
-
-                        <h3 className="font-semibold text-slate-900">
-                          {insight.title ||
-                            "Meeting Insight"}
-                        </h3>
-
-                        <p className="text-sm text-slate-600 mt-2 leading-6">
-                          {insight.description ||
-                            ""}
-                        </p>
-
-                      </div>
-
-                    </div>
-
-                  </div>
-                )
-              )}
-
-            </div>
-
-          </section>
-        )}
-
-
-        {/* AI Recommendations */}
-
-        {recommendations.length > 0 && (
-          <section className="bg-white border border-slate-200 rounded-2xl p-6 mb-8 shadow-sm">
-
-            <div className="flex items-center gap-3 mb-6">
-
-              <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center">
-                <Sparkles className="w-5 h-5 text-slate-700" />
-              </div>
-
-              <div>
-
-                <h2 className="text-xl font-semibold text-slate-900">
-                  AI Recommendations
-                </h2>
-
-                <p className="text-sm text-slate-500 mt-1">
-                  Suggestions to improve future meetings
-                </p>
-
-              </div>
-
-            </div>
-
-
-            <div className="space-y-3">
-
-              {recommendations.map(
-                (recommendation, index) => (
-                  <div
-                    key={index}
-                    className="flex gap-3 p-4 bg-slate-50 rounded-xl"
-                  >
-
-                    <span className="w-7 h-7 shrink-0 rounded-full bg-slate-900 text-white flex items-center justify-center text-sm font-semibold">
-                      {index + 1}
-                    </span>
-
-                    <p className="text-sm text-slate-700 leading-6">
-                      {recommendation}
-                    </p>
-
-                  </div>
-                )
-              )}
-
-            </div>
-
-          </section>
         )}
 
 
@@ -1323,13 +1301,16 @@ function MeetingDetails() {
                   </p>
 
                   <p className="text-3xl font-bold text-slate-900 mt-2">
-                    {analytics?.totalWords || 0}
+                    {analytics?.totalWords ||
+                      0}
                   </p>
 
                 </div>
 
                 <div className="p-3 bg-slate-100 rounded-xl">
-                  <MessageSquareText className="w-6 h-6 text-slate-600" />
+
+                  <FileText className="w-6 h-6 text-slate-600" />
+
                 </div>
 
               </div>
@@ -1350,13 +1331,16 @@ function MeetingDetails() {
                   </p>
 
                   <p className="text-3xl font-bold text-slate-900 mt-2">
-                    {analytics?.speakerCount || 0}
+                    {analytics?.speakerCount ||
+                      0}
                   </p>
 
                 </div>
 
                 <div className="p-3 bg-slate-100 rounded-xl">
+
                   <Users className="w-6 h-6 text-slate-600" />
+
                 </div>
 
               </div>
@@ -1376,14 +1360,17 @@ function MeetingDetails() {
                     Positive Segments
                   </p>
 
-                  <p className="text-3xl font-bold text-green-600 mt-2">
-                    {analytics?.positive || 0}
+                  <p className="text-3xl font-bold text-slate-900 mt-2">
+                    {analytics?.positive ||
+                      0}
                   </p>
 
                 </div>
 
                 <div className="p-3 bg-slate-100 rounded-xl">
-                  <CheckCircle2 className="w-6 h-6 text-green-600" />
+
+                  <TrendingUp className="w-6 h-6 text-slate-600" />
+
                 </div>
 
               </div>
@@ -1410,7 +1397,9 @@ function MeetingDetails() {
                 </div>
 
                 <div className="p-3 bg-slate-100 rounded-xl">
+
                   <CheckCircle2 className="w-6 h-6 text-slate-600" />
+
                 </div>
 
               </div>
@@ -1422,14 +1411,153 @@ function MeetingDetails() {
         </section>
 
 
-        {/* Sentiment Overview */}
+        {/* AI Insights */}
+
+        {insights.length > 0 && (
+          <section className="bg-white border border-slate-200 rounded-2xl p-6 mb-8 shadow-sm">
+
+            <div className="flex items-center gap-3 mb-6">
+
+              <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center">
+
+                <TrendingUp className="w-5 h-5 text-slate-700" />
+
+              </div>
+
+              <div>
+
+                <h2 className="text-xl font-semibold text-slate-900">
+                  AI Meeting Insights
+                </h2>
+
+                <p className="text-sm text-slate-500 mt-1">
+                  What the AI found in this meeting
+                </p>
+
+              </div>
+
+            </div>
+
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+              {insights.map(
+                (insight, index) => {
+
+                  const isWarning =
+                    insight.type ===
+                    "warning";
+
+                  return (
+                    <div
+                      key={index}
+                      className="border border-slate-200 rounded-xl p-5"
+                    >
+
+                      <div className="flex items-start gap-3">
+
+                        <div className="mt-1">
+
+                          {isWarning ? (
+                            <Clock3 className="w-5 h-5 text-slate-600" />
+                          ) : (
+                            <CheckCircle2 className="w-5 h-5 text-slate-600" />
+                          )}
+
+                        </div>
+
+                        <div>
+
+                          <h3 className="font-semibold text-slate-900">
+                            {insight.title}
+                          </h3>
+
+                          <p className="text-sm text-slate-600 mt-2 leading-6">
+                            {insight.description}
+                          </p>
+
+                        </div>
+
+                      </div>
+
+                    </div>
+                  );
+                }
+              )}
+
+            </div>
+
+          </section>
+        )}
+
+
+        {/* AI Recommendations */}
+
+        {recommendations.length > 0 && (
+          <section className="bg-white border border-slate-200 rounded-2xl p-6 mb-8 shadow-sm">
+
+            <div className="flex items-center gap-3 mb-6">
+
+              <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center">
+
+                <Sparkles className="w-5 h-5 text-slate-700" />
+
+              </div>
+
+              <div>
+
+                <h2 className="text-xl font-semibold text-slate-900">
+                  AI Recommendations
+                </h2>
+
+                <p className="text-sm text-slate-500 mt-1">
+                  Suggestions to improve future meetings
+                </p>
+
+              </div>
+
+            </div>
+
+
+            <div className="space-y-3">
+
+              {recommendations.map(
+                (recommendation, index) => (
+
+                  <div
+                    key={index}
+                    className="flex gap-3 p-4 bg-slate-50 rounded-xl"
+                  >
+
+                    <span className="w-7 h-7 shrink-0 rounded-full bg-slate-900 text-white flex items-center justify-center text-sm font-semibold">
+                      {index + 1}
+                    </span>
+
+                    <p className="text-sm text-slate-700 leading-6">
+                      {recommendation}
+                    </p>
+
+                  </div>
+
+                )
+              )}
+
+            </div>
+
+          </section>
+        )}
+
+
+        {/* Sentiment */}
 
         <section className="bg-white border border-slate-200 rounded-2xl p-6 mb-8 shadow-sm">
 
           <div className="flex items-center gap-3 mb-6">
 
             <div className="p-3 bg-slate-100 rounded-xl">
+
               <BarChart3 className="w-6 h-6 text-slate-700" />
+
             </div>
 
             <div>
@@ -1459,8 +1587,9 @@ function MeetingDetails() {
                   Positive
                 </span>
 
-                <span className="font-semibold text-green-600">
-                  {analytics?.positive || 0}
+                <span className="font-semibold text-slate-700">
+                  {analytics?.positive ||
+                    0}
                 </span>
 
               </div>
@@ -1468,10 +1597,11 @@ function MeetingDetails() {
               <div className="w-full bg-slate-100 rounded-full h-3">
 
                 <div
-                  className="bg-green-500 h-3 rounded-full"
+                  className="bg-slate-800 h-3 rounded-full transition-all"
                   style={{
                     width: `${getSentimentPercentage(
-                      analytics?.positive || 0
+                      analytics?.positive ||
+                        0
                     )}%`,
                   }}
                 />
@@ -1480,7 +1610,8 @@ function MeetingDetails() {
 
               <p className="text-xs text-slate-500 mt-2">
                 {getSentimentPercentage(
-                  analytics?.positive || 0
+                  analytics?.positive ||
+                    0
                 )}
                 %
               </p>
@@ -1498,8 +1629,9 @@ function MeetingDetails() {
                   Negative
                 </span>
 
-                <span className="font-semibold text-red-600">
-                  {analytics?.negative || 0}
+                <span className="font-semibold text-slate-700">
+                  {analytics?.negative ||
+                    0}
                 </span>
 
               </div>
@@ -1507,10 +1639,11 @@ function MeetingDetails() {
               <div className="w-full bg-slate-100 rounded-full h-3">
 
                 <div
-                  className="bg-red-500 h-3 rounded-full"
+                  className="bg-slate-500 h-3 rounded-full transition-all"
                   style={{
                     width: `${getSentimentPercentage(
-                      analytics?.negative || 0
+                      analytics?.negative ||
+                        0
                     )}%`,
                   }}
                 />
@@ -1519,7 +1652,8 @@ function MeetingDetails() {
 
               <p className="text-xs text-slate-500 mt-2">
                 {getSentimentPercentage(
-                  analytics?.negative || 0
+                  analytics?.negative ||
+                    0
                 )}
                 %
               </p>
@@ -1537,8 +1671,9 @@ function MeetingDetails() {
                   Neutral
                 </span>
 
-                <span className="font-semibold text-slate-600">
-                  {analytics?.neutral || 0}
+                <span className="font-semibold text-slate-700">
+                  {analytics?.neutral ||
+                    0}
                 </span>
 
               </div>
@@ -1546,10 +1681,11 @@ function MeetingDetails() {
               <div className="w-full bg-slate-100 rounded-full h-3">
 
                 <div
-                  className="bg-slate-400 h-3 rounded-full"
+                  className="bg-slate-400 h-3 rounded-full transition-all"
                   style={{
                     width: `${getSentimentPercentage(
-                      analytics?.neutral || 0
+                      analytics?.neutral ||
+                        0
                     )}%`,
                   }}
                 />
@@ -1558,7 +1694,8 @@ function MeetingDetails() {
 
               <p className="text-xs text-slate-500 mt-2">
                 {getSentimentPercentage(
-                  analytics?.neutral || 0
+                  analytics?.neutral ||
+                    0
                 )}
                 %
               </p>
@@ -1608,17 +1745,12 @@ function MeetingDetails() {
 
           {speakerAnalytics.length === 0 ? (
 
-            <div className="text-center py-10">
+            <div className="text-center py-10 text-slate-500">
 
-              <Users className="w-8 h-8 text-slate-300 mx-auto" />
+              <Users className="w-8 h-8 mx-auto mb-3 text-slate-400" />
 
-              <p className="text-slate-500 mt-3">
-                Speaker analytics are not available yet.
-              </p>
-
-              <p className="text-xs text-slate-400 mt-1">
-                Run speaker identification and analysis first.
-              </p>
+              Speaker analytics are not
+              available yet.
 
             </div>
 
@@ -1636,28 +1768,22 @@ function MeetingDetails() {
 
                   const speakingTime =
                     Number(
-                      speaker.speaking_time || 0
-                    );
-
-                  const minutes =
-                    Math.floor(
-                      speakingTime / 60
-                    );
-
-                  const seconds =
-                    Math.floor(
-                      speakingTime % 60
+                      speaker.speaking_time ||
+                        0
                     );
 
                   return (
                     <div
-                      key={speaker.id}
+                      key={
+                        speaker.id ||
+                        speaker.speaker
+                      }
                       className="border border-slate-200 rounded-xl p-5"
                     >
 
                       <div className="flex items-center justify-between mb-4">
 
-                        <div className="flex gap-3">
+                        <div className="flex items-center gap-3">
 
                           <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center">
 
@@ -1672,7 +1798,9 @@ function MeetingDetails() {
                             </p>
 
                             <p className="text-sm text-slate-500">
-                              {speaker.word_count || 0} words
+                              {speaker.word_count ||
+                                0}{" "}
+                              words
                             </p>
 
                           </div>
@@ -1716,7 +1844,9 @@ function MeetingDetails() {
                           </p>
 
                           <p className="font-semibold text-slate-900 mt-1">
-                            {minutes}m {seconds}s
+                            {formatDuration(
+                              speakingTime
+                            )}
                           </p>
 
                         </div>
@@ -1729,7 +1859,8 @@ function MeetingDetails() {
                           </p>
 
                           <p className="font-semibold text-slate-900 mt-1">
-                            {speaker.word_count || 0}
+                            {speaker.word_count ||
+                              0}
                           </p>
 
                         </div>
@@ -1742,12 +1873,13 @@ function MeetingDetails() {
               )}
 
             </div>
-
           )}
 
 
           {dominantSpeaker &&
-            speakerAnalytics.length > 1 && (
+            speakerAnalytics.length >
+              1 && (
+
               <div className="mt-6 p-4 bg-slate-50 border border-slate-200 rounded-xl">
 
                 <div className="flex gap-3">
@@ -1759,15 +1891,16 @@ function MeetingDetails() {
                     <span className="font-semibold text-slate-900">
                       {dominantSpeaker.speaker}
                     </span>{" "}
-                    had the highest participation with{" "}
-
+                    had the highest
+                    participation with{" "}
                     <span className="font-semibold text-slate-900">
                       {getSpeakerPercentage(
                         dominantSpeaker.word_count
                       )}
                       %
                     </span>{" "}
-                    of the meeting's spoken words.
+                    of the meeting's
+                    spoken words.
 
                   </p>
 
@@ -1781,7 +1914,7 @@ function MeetingDetails() {
 
         {/* Action Items */}
 
-        <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 mb-8">
+        <section className="bg-white border border-slate-200 rounded-2xl p-6 mb-8 shadow-sm">
 
           <div className="flex items-center justify-between mb-6">
 
@@ -1801,44 +1934,138 @@ function MeetingDetails() {
             <div className="text-right">
 
               <p className="text-sm text-slate-500">
-                {actionItems.length} task
-                {actionItems.length !== 1
-                  ? "s"
-                  : ""}
+                {actionItems.length} tasks
               </p>
 
-              {actionItems.length > 0 && (
-                <p className="text-xs text-slate-400 mt-1">
-                  {actionCompletionRate}% completed
-                </p>
-              )}
+              <p className="text-sm font-semibold text-slate-900 mt-1">
+                {actionCompletionRate}%
+                completed
+              </p>
 
             </div>
 
           </div>
 
 
-          {actionLoading ? (
+          {/* Action statistics */}
 
-            <div className="py-10 text-center">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
 
-              <Loader2 className="w-6 h-6 animate-spin mx-auto text-slate-500" />
+            <div className="bg-slate-50 rounded-xl p-4">
 
-              <p className="text-sm text-slate-500 mt-3">
-                Loading action items...
+              <p className="text-xs text-slate-500">
+                Total
+              </p>
+
+              <p className="text-2xl font-bold mt-1">
+                {actionItems.length}
               </p>
 
             </div>
 
-          ) : actionItems.length === 0 ? (
 
-            <div className="text-center py-10">
+            <div className="bg-slate-50 rounded-xl p-4">
 
-              <CheckCircle2 className="w-8 h-8 text-slate-300 mx-auto" />
-
-              <p className="text-slate-500 mt-3">
-                No action items found.
+              <p className="text-xs text-slate-500">
+                Pending
               </p>
+
+              <p className="text-2xl font-bold mt-1">
+                {pendingCount}
+              </p>
+
+            </div>
+
+
+            <div className="bg-slate-50 rounded-xl p-4">
+
+              <p className="text-xs text-slate-500">
+                In Progress
+              </p>
+
+              <p className="text-2xl font-bold mt-1">
+                {inProgressCount}
+              </p>
+
+            </div>
+
+
+            <div className="bg-slate-50 rounded-xl p-4">
+
+              <p className="text-xs text-slate-500">
+                Completed
+              </p>
+
+              <p className="text-2xl font-bold mt-1">
+                {completedCount}
+              </p>
+
+            </div>
+
+          </div>
+
+
+          {/* Filters */}
+
+          <div className="flex flex-wrap gap-2 mb-5">
+
+            {[
+              ["all", "All"],
+              ["pending", "Pending"],
+              [
+                "in_progress",
+                "In Progress",
+              ],
+              [
+                "completed",
+                "Completed",
+              ],
+              ["overdue", "Overdue"],
+            ].map(
+              ([value, label]) => (
+
+                <button
+                  key={value}
+                  onClick={() =>
+                    setActionFilter(
+                      value
+                    )
+                  }
+                  className={`px-4 py-2 rounded-lg text-sm font-medium border transition ${
+                    actionFilter === value
+                      ? "bg-slate-900 text-white border-slate-900"
+                      : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
+                  }`}
+                >
+                  {label}
+
+                  {value ===
+                    "overdue" &&
+                    overdueCount >
+                      0 && (
+                      <span className="ml-2">
+                        {overdueCount}
+                      </span>
+                    )}
+                </button>
+
+              )
+            )}
+
+          </div>
+
+
+          {/* Items */}
+
+          {filteredActionItems.length ===
+          0 ? (
+
+            <div className="text-center py-10 text-slate-500">
+
+              <CheckCircle2 className="w-8 h-8 mx-auto mb-3 text-slate-400" />
+
+              No action items found
+              for this filter.
 
             </div>
 
@@ -1846,42 +2073,65 @@ function MeetingDetails() {
 
             <div className="space-y-4">
 
-              {actionItems.map(
+              {filteredActionItems.map(
                 (item) => (
 
                   <div
                     key={item.id}
-                    className="border border-slate-200 rounded-xl p-4 hover:shadow-sm transition"
+                    className="border border-slate-200 rounded-xl p-5"
                   >
 
-                    <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
+                    <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-5">
 
-                      <div className="flex gap-3">
+                      <div className="flex gap-3 flex-1">
 
                         <div className="mt-1">
 
                           {item.status ===
                           "completed" ? (
-                            <CheckCircle2 className="w-5 h-5 text-green-600" />
+                            <CheckCircle2 className="w-5 h-5 text-slate-700" />
                           ) : (
-                            <Clock3 className="w-5 h-5 text-amber-500" />
+                            <Clock3 className="w-5 h-5 text-slate-500" />
                           )}
 
                         </div>
 
 
-                        <div>
+                        <div className="flex-1">
 
-                          <p
-                            className={`font-medium ${
-                              item.status ===
-                              "completed"
-                                ? "line-through text-slate-400"
-                                : "text-slate-900"
-                            }`}
-                          >
-                            {item.task}
-                          </p>
+                          <div className="flex flex-wrap items-center gap-2">
+
+                            <p
+                              className={`font-medium ${
+                                item.status ===
+                                "completed"
+                                  ? "line-through text-slate-400"
+                                  : "text-slate-900"
+                              }`}
+                            >
+                              {item.task}
+                            </p>
+
+
+                            <span
+                              className={`px-2.5 py-1 rounded-full border text-xs font-medium ${getPriorityClass(
+                                item.priority
+                              )}`}
+                            >
+                              {item.priority ||
+                                "medium"}
+                            </span>
+
+
+                            {isOverdue(
+                              item
+                            ) && (
+                              <span className="px-2.5 py-1 rounded-full bg-red-50 text-red-700 border border-red-200 text-xs font-medium">
+                                Overdue
+                              </span>
+                            )}
+
+                          </div>
 
 
                           <div className="flex flex-wrap gap-4 mt-3 text-sm text-slate-500">
@@ -1912,21 +2162,41 @@ function MeetingDetails() {
                       </div>
 
 
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap gap-2">
 
-                        {updatingActionId ===
-                          item.id && (
-                          <Loader2 className="w-4 h-4 animate-spin text-slate-500" />
-                        )}
+                        <select
+                          value={
+                            item.priority ||
+                            "medium"
+                          }
+                          onChange={(e) =>
+                            updateActionItemPriority(
+                              item.id,
+                              e.target.value
+                            )
+                          }
+                          className="border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white"
+                        >
+
+                          <option value="low">
+                            Low
+                          </option>
+
+                          <option value="medium">
+                            Medium
+                          </option>
+
+                          <option value="high">
+                            High
+                          </option>
+
+                        </select>
+
 
                         <select
                           value={
                             item.status ||
                             "pending"
-                          }
-                          disabled={
-                            updatingActionId ===
-                            item.id
                           }
                           onChange={(e) =>
                             updateActionItemStatus(
@@ -1934,7 +2204,7 @@ function MeetingDetails() {
                               e.target.value
                             )
                           }
-                          className="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white"
+                          className="border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white"
                         >
 
                           <option value="pending">
@@ -1967,65 +2237,38 @@ function MeetingDetails() {
         </section>
 
 
-        {/* Summary */}
+        {/* Key Points */}
 
-        {meeting.summary && (
+        {parseJson(
+          meeting.key_points
+        ).length > 0 && (
+
           <section className="bg-white border border-slate-200 rounded-2xl p-6 mb-8 shadow-sm">
 
             <div className="flex items-center gap-3 mb-5">
 
-              <div className="p-3 bg-slate-100 rounded-xl">
-                <FileText className="w-5 h-5 text-slate-700" />
-              </div>
+              <FileText className="w-5 h-5 text-slate-600" />
 
-              <div>
-
-                <h2 className="text-xl font-semibold text-slate-900">
-                  Meeting Summary
-                </h2>
-
-                <p className="text-sm text-slate-500">
-                  AI-generated overview
-                </p>
-
-              </div>
+              <h2 className="text-xl font-semibold text-slate-900">
+                Key Points
+              </h2>
 
             </div>
 
 
-            <p className="text-slate-700 leading-7 whitespace-pre-wrap">
-              {meeting.summary}
-            </p>
-
-          </section>
-        )}
-
-
-        {/* Key Points */}
-
-        {parseJson(
-          meeting.key_points,
-          []
-        ).length > 0 && (
-          <section className="bg-white border border-slate-200 rounded-2xl p-6 mb-8 shadow-sm">
-
-            <h2 className="text-xl font-semibold text-slate-900 mb-5">
-              Key Points
-            </h2>
-
             <div className="space-y-3">
 
               {parseJson(
-                meeting.key_points,
-                []
+                meeting.key_points
               ).map(
                 (point, index) => (
+
                   <div
                     key={index}
                     className="flex gap-3"
                   >
 
-                    <span className="w-6 h-6 shrink-0 rounded-full bg-slate-900 text-white flex items-center justify-center text-xs font-semibold">
+                    <span className="w-6 h-6 shrink-0 rounded-full bg-slate-100 flex items-center justify-center text-xs font-semibold text-slate-600">
                       {index + 1}
                     </span>
 
@@ -2034,91 +2277,118 @@ function MeetingDetails() {
                     </p>
 
                   </div>
+
                 )
               )}
 
             </div>
 
           </section>
+
         )}
 
 
         {/* Decisions */}
 
         {parseJson(
-          meeting.decisions,
-          []
+          meeting.decisions
         ).length > 0 && (
+
           <section className="bg-white border border-slate-200 rounded-2xl p-6 mb-8 shadow-sm">
 
-            <h2 className="text-xl font-semibold text-slate-900 mb-5">
-              Decisions
-            </h2>
+            <div className="flex items-center gap-3 mb-5">
+
+              <CheckCircle2 className="w-5 h-5 text-slate-600" />
+
+              <h2 className="text-xl font-semibold text-slate-900">
+                Decisions
+              </h2>
+
+            </div>
+
 
             <div className="space-y-3">
 
               {parseJson(
-                meeting.decisions,
-                []
+                meeting.decisions
               ).map(
                 (decision, index) => (
+
                   <div
                     key={index}
-                    className="flex gap-3"
+                    className="p-4 bg-slate-50 rounded-xl text-sm text-slate-700"
                   >
-
-                    <CheckCircle2 className="w-5 h-5 text-green-600 shrink-0 mt-0.5" />
-
-                    <p className="text-sm text-slate-700 leading-6">
-                      {decision}
-                    </p>
-
+                    {decision}
                   </div>
+
                 )
               )}
 
             </div>
 
           </section>
+
         )}
 
 
         {/* Transcript */}
 
-        <section className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+        <section className="bg-white border border-slate-200 rounded-2xl p-6 mb-8 shadow-sm">
 
-          <div className="p-6 border-b border-slate-200">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6">
 
-            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div>
 
-              <div>
+              <div className="flex items-center gap-3">
+
+                <FileAudio className="w-5 h-5 text-slate-600" />
 
                 <h2 className="text-xl font-semibold text-slate-900">
                   Transcript
                 </h2>
 
-                <p className="text-sm text-slate-500 mt-1">
-                  Search and explore the meeting conversation
-                </p>
-
               </div>
 
-
-              {hasTranscript && (
-                <div className="text-sm text-slate-500">
-                  Showing{" "}
-                  {filteredSegments.length} of{" "}
-                  {transcriptSegments.length} segments
-                </div>
-              )}
+              <p className="text-sm text-slate-500 mt-1">
+                Search and filter the meeting conversation
+              </p>
 
             </div>
 
 
-            {hasTranscript && (
-              <div className="flex flex-col md:flex-row gap-3 mt-5">
+            {transcriptSegments.length >
+              0 && (
+              <span className="text-sm text-slate-500">
+                {filteredSegments.length} of{" "}
+                {transcriptSegments.length}{" "}
+                segments
+              </span>
+            )}
 
-                {/* Search */}
+          </div>
+
+
+          {!transcript ||
+          transcriptSegments.length ===
+            0 ? (
+
+            <div className="text-center py-12">
+
+              <FileText className="w-9 h-9 mx-auto text-slate-400" />
+
+              <p className="text-slate-500 mt-3">
+                Transcript is not available yet.
+              </p>
+
+            </div>
+
+          ) : (
+
+            <>
+
+              {/* Transcript controls */}
+
+              <div className="flex flex-col md:flex-row gap-3 mb-6">
 
                 <div className="relative flex-1">
 
@@ -2139,185 +2409,166 @@ function MeetingDetails() {
                 </div>
 
 
-                {/* Speaker */}
+                <div className="relative">
 
-                <select
-                  value={selectedSpeaker}
-                  onChange={(e) =>
-                    setSelectedSpeaker(
-                      e.target.value
-                    )
-                  }
-                  className="md:w-56 px-4 py-3 border border-slate-200 rounded-xl bg-white outline-none"
-                >
+                  <select
+                    value={
+                      selectedSpeaker
+                    }
+                    onChange={(e) =>
+                      setSelectedSpeaker(
+                        e.target.value
+                      )
+                    }
+                    className="appearance-none w-full md:w-56 px-4 py-3 pr-10 border border-slate-200 rounded-xl bg-white outline-none"
+                  >
 
-                  <option value="ALL">
-                    All speakers
-                  </option>
+                    <option value="ALL">
+                      All speakers
+                    </option>
 
-                  {speakers.map(
-                    (speaker) => (
-                      <option
-                        key={speaker}
-                        value={speaker}
-                      >
-                        {speaker}
-                      </option>
-                    )
-                  )}
+                    {speakers.map(
+                      (speaker) => (
+                        <option
+                          key={speaker}
+                          value={speaker}
+                        >
+                          {speaker}
+                        </option>
+                      )
+                    )}
 
-                </select>
+                  </select>
+
+                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+
+                </div>
 
               </div>
-            )}
-
-          </div>
 
 
-          {!hasTranscript ? (
+              {/* Transcript list */}
 
-            <div className="p-12 text-center">
+              <div className="border border-slate-200 rounded-xl divide-y divide-slate-200 max-h-[650px] overflow-y-auto">
 
-              <FileText className="w-10 h-10 text-slate-300 mx-auto" />
+                {filteredSegments.length ===
+                0 ? (
 
-              <h3 className="font-semibold text-slate-900 mt-4">
-                Transcript not available
-              </h3>
+                  <div className="p-10 text-center">
 
-              <p className="text-sm text-slate-500 mt-2">
-                Transcribe the meeting to view its conversation.
-              </p>
+                    <Search className="w-8 h-8 mx-auto text-slate-400" />
 
-            </div>
+                    <p className="text-slate-500 mt-3">
+                      No transcript segments match your search.
+                    </p>
 
-          ) : filteredSegments.length === 0 ? (
-
-            <div className="p-12 text-center">
-
-              <Search className="w-8 h-8 text-slate-300 mx-auto" />
-
-              <p className="text-slate-500 mt-3">
-                No transcript segments match your filters.
-              </p>
-
-              <button
-                onClick={() => {
-                  setSearchQuery("");
-                  setSelectedSpeaker("ALL");
-                }}
-                className="mt-4 text-sm font-medium text-slate-900 hover:underline"
-              >
-                Clear filters
-              </button>
-
-            </div>
-
-          ) : (
-
-            <div className="divide-y divide-slate-100">
-
-              {filteredSegments.map(
-                (segment, index) => {
-
-                  const speaker =
-                    segment.speaker ||
-                    "UNKNOWN";
-
-                  return (
-                    <div
-                      key={`${segment.start}-${index}`}
-                      className="p-5 hover:bg-slate-50 transition"
+                    <button
+                      onClick={() => {
+                        setSearchQuery("");
+                        setSelectedSpeaker(
+                          "ALL"
+                        );
+                      }}
+                      className="mt-4 text-sm font-medium text-slate-900 hover:underline"
                     >
+                      Clear filters
+                    </button>
 
-                      <div className="flex gap-4">
+                  </div>
 
-                        {/* Timestamp */}
+                ) : (
 
-                        <button
-                          type="button"
-                          title="Jump to timestamp"
-                          className="shrink-0 flex items-center gap-1 text-xs font-medium text-slate-500 hover:text-slate-900"
+                  filteredSegments.map(
+                    (segment, index) => {
+
+                      const speaker =
+                        segment.speaker ||
+                        "UNKNOWN";
+
+                      return (
+                        <div
+                          key={`${segment.start}-${index}`}
+                          className="p-5 hover:bg-slate-50 transition"
                         >
-                          <Clock3 className="w-4 h-4" />
-                          {formatTimestamp(
-                            segment.start
-                          )}
-                        </button>
+
+                          <div className="flex gap-4">
+
+                            <div className="w-16 shrink-0">
+
+                              <span className="inline-flex items-center gap-1 text-xs font-medium text-slate-500 bg-slate-100 px-2 py-1 rounded-md">
+
+                                <Play className="w-3 h-3" />
+
+                                {formatTime(
+                                  segment.start
+                                )}
+
+                              </span>
+
+                            </div>
 
 
-                        {/* Content */}
+                            <div className="flex-1">
 
-                        <div className="min-w-0">
+                              <div className="flex items-center gap-2 mb-2">
 
-                          <div className="flex items-center gap-2 mb-2">
+                                <span className="text-sm font-semibold text-slate-900">
+                                  {speaker}
+                                </span>
 
-                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-100 text-xs font-medium text-slate-700">
+                                {segment.end !==
+                                  undefined && (
+                                  <span className="text-xs text-slate-400">
+                                    →
+                                    {" "}
+                                    {formatTime(
+                                      segment.end
+                                    )}
+                                  </span>
+                                )}
 
-                              <User className="w-3.5 h-3.5" />
+                              </div>
 
-                              {speaker}
 
-                            </span>
+                              <p className="text-sm text-slate-700 leading-7">
+                                {highlightText(
+                                  segment.text ||
+                                    ""
+                                )}
+                              </p>
 
-                            <span className="text-xs text-slate-400">
-                              →
-                            </span>
-
-                            <span className="text-xs text-slate-400">
-                              {formatTimestamp(
-                                segment.end
-                              )}
-                            </span>
+                            </div>
 
                           </div>
 
-
-                          <p className="text-sm text-slate-700 leading-7">
-                            {highlightText(
-                              segment.text ||
-                                ""
-                            )}
-                          </p>
-
                         </div>
+                      );
+                    }
+                  )
 
-                      </div>
+                )}
 
-                    </div>
-                  );
-                }
-              )}
+              </div>
 
-            </div>
+            </>
 
           )}
 
         </section>
 
 
-        {/* Bottom Refresh */}
+        {/* Language */}
 
-        <div className="flex justify-center mt-8">
+        {transcript?.language && (
+          <div className="text-center text-sm text-slate-400 pb-8">
 
-          <button
-            onClick={fetchMeetingData}
-            disabled={loading}
-            className="flex items-center gap-2 px-4 py-2.5 border border-slate-200 bg-white rounded-xl text-sm text-slate-600 hover:bg-slate-50 transition disabled:opacity-50"
-          >
+            Detected language:{" "}
+            <span className="font-medium text-slate-500">
+              {transcript.language}
+            </span>
 
-            <RefreshCw
-              className={`w-4 h-4 ${
-                loading
-                  ? "animate-spin"
-                  : ""
-              }`}
-            />
-
-            Refresh Meeting Data
-
-          </button>
-
-        </div>
+          </div>
+        )}
 
       </main>
 
@@ -2326,3 +2577,4 @@ function MeetingDetails() {
 }
 
 export default MeetingDetails;
+
