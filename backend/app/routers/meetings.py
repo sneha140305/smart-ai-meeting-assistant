@@ -32,7 +32,11 @@ from app.services.meeting_ai import (
 )
 from app.services.analytics import calculate_meeting_analytics
 from app.services.meeting_score import calculate_meeting_score
+from fastapi.responses import FileResponse
 
+from app.services.pdf_report import (
+    generate_meeting_pdf,
+)
 
 router = APIRouter(
     prefix="/meetings",
@@ -254,7 +258,71 @@ def search_meetings(
 
     return meetings
 
+@router.get("/{meeting_id}/report")
+def download_meeting_report(
+    meeting_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    meeting = (
+        db.query(Meeting)
+        .filter(
+            Meeting.id == meeting_id,
+            Meeting.owner_id == current_user.id
+        )
+        .first()
+    )
 
+    if not meeting:
+        raise HTTPException(
+            status_code=404,
+            detail="Meeting not found"
+        )
+
+    if meeting.status != "completed":
+        raise HTTPException(
+            status_code=400,
+            detail="Meeting analysis is not completed yet."
+        )
+
+    transcript = (
+        db.query(Transcript)
+        .filter(
+            Transcript.meeting_id == meeting_id
+        )
+        .first()
+    )
+
+    action_items = (
+        db.query(ActionItem)
+        .filter(
+            ActionItem.meeting_id == meeting_id
+        )
+        .all()
+    )
+
+    speaker_analytics = (
+        db.query(SpeakerAnalytics)
+        .filter(
+            SpeakerAnalytics.meeting_id == meeting_id
+        )
+        .all()
+    )
+
+    file_path = generate_meeting_pdf(
+        meeting=meeting,
+        transcript=transcript,
+        action_items=action_items,
+        speaker_analytics=speaker_analytics,
+    )
+
+    return FileResponse(
+        path=file_path,
+        media_type="application/pdf",
+        filename=(
+            f"meeting_report_{meeting.id}.pdf"
+        ),
+    )
 # =========================================================
 # GET SINGLE MEETING
 # =========================================================
@@ -1108,3 +1176,4 @@ def get_speaker_analytics(
         }
         for item in analytics
     ]
+
