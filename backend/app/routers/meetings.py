@@ -32,7 +32,7 @@ from app.services.meeting_ai import (
 )
 from app.services.analytics import calculate_meeting_analytics
 from app.services.meeting_score import calculate_meeting_score
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from app.services.pdf_report import (
     generate_meeting_pdf,
@@ -1176,4 +1176,43 @@ def get_speaker_analytics(
         }
         for item in analytics
     ]
+
+@router.get("/{meeting_id}/audio")
+def get_meeting_audio(
+    meeting_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    meeting = (
+        db.query(Meeting)
+        .filter(
+            Meeting.id == meeting_id,
+            Meeting.owner_id == current_user.id
+        )
+        .first()
+    )
+
+    if not meeting:
+        raise HTTPException(
+            status_code=404,
+            detail="Meeting not found"
+        )
+
+    if not meeting.audio_path:
+        raise HTTPException(
+            status_code=404,
+            detail="Processed audio not found"
+        )
+
+    if not os.path.exists(meeting.audio_path):
+        raise HTTPException(
+            status_code=404,
+            detail="Audio file does not exist"
+        )
+
+    return FileResponse(
+        meeting.audio_path,
+        media_type="audio/wav",
+        filename=f"meeting_{meeting.id}.wav"
+    )
 
