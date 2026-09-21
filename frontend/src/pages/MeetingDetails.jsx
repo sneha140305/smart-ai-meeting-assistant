@@ -1,314 +1,258 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { useParams, useNavigate } from "react-router-dom";
 import {
   ArrowLeft,
   Play,
-  Pause,
-  FileAudio,
-  Brain,
-  CheckCircle2,
-  Clock3,
-  AlertCircle,
-  Users,
-  MessageSquare,
-  BarChart3,
-  Search,
-  Filter,
-  Download,
-  Lightbulb,
-  Target,
-  TrendingUp,
-  TrendingDown,
-  Minus,
-  Check,
-  Circle,
   Loader2,
-  RefreshCw,
-  CalendarDays,
+  CheckCircle,
+  AlertCircle,
+  Search,
+  Download,
+  Clock,
+  Users,
   FileText,
+  ListTodo,
+  BarChart3,
+  Brain,
+  Lightbulb,
+  MessageSquare,
   Volume2,
+  Pause,
   ChevronDown,
-  ChevronUp,
+  Filter,
+  RefreshCw,
 } from "lucide-react";
+
 import api from "../services/api";
+import ProcessingProgress from "../components/ProcessingProgress";
+
 
 export default function MeetingDetails() {
   const { meetingId } = useParams();
   const navigate = useNavigate();
 
-  // ---------------------------------------------------------
-  // CORE STATE
-  // ---------------------------------------------------------
+  // ============================================================
+  // STATE
+  // ============================================================
 
   const [meeting, setMeeting] = useState(null);
   const [transcript, setTranscript] = useState(null);
   const [actionItems, setActionItems] = useState([]);
+  const [speakerAnalytics, setSpeakerAnalytics] = useState([]);
 
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
 
-  // ---------------------------------------------------------
-  // PROCESSING STATE
-  // ---------------------------------------------------------
-
   const [processing, setProcessing] = useState(false);
-  const [processingStep, setProcessingStep] = useState("");
 
-  // ---------------------------------------------------------
-  // TRANSCRIPT STATE
-  // ---------------------------------------------------------
-
+  // Transcript
   const [transcriptSearch, setTranscriptSearch] = useState("");
   const [speakerFilter, setSpeakerFilter] = useState("all");
 
-  // ---------------------------------------------------------
-  // ACTION ITEM STATE
-  // ---------------------------------------------------------
-
+  // Action items
   const [actionFilter, setActionFilter] = useState("all");
 
-  // ---------------------------------------------------------
-  // AUDIO STATE
-  // ---------------------------------------------------------
-
+  // Audio
   const [audioUrl, setAudioUrl] = useState("");
   const [audioCurrentTime, setAudioCurrentTime] = useState(0);
   const [audioDuration, setAudioDuration] = useState(0);
-  const [audioLoading, setAudioLoading] = useState(false);
-  const [audioPlaying, setAudioPlaying] = useState(false);
 
+  // PDF
+  const [downloadingReport, setDownloadingReport] = useState(false);
+
+  // Refs
   const audioRef = useRef(null);
-
-  // ---------------------------------------------------------
-  // TRANSCRIPT REFS
-  // ---------------------------------------------------------
-
   const transcriptRefs = useRef([]);
   const lastActiveSegment = useRef(-1);
 
-  // ---------------------------------------------------------
-  // UI STATE
-  // ---------------------------------------------------------
 
-  const [expandedSections, setExpandedSections] = useState({
-    summary: true,
-    keyPoints: true,
-    decisions: true,
-    actions: true,
-    analytics: true,
-    speakers: true,
-    transcript: true,
-    insights: true,
-    recommendations: true,
-  });
+  // ============================================================
+  // INITIAL LOAD
+  // ============================================================
 
-  // ---------------------------------------------------------
-  // HELPERS
-  // ---------------------------------------------------------
+  useEffect(() => {
+    loadMeeting();
+  }, [meetingId]);
 
-  const formatDate = (dateString) => {
-    if (!dateString) return "N/A";
 
-    try {
-      return new Date(dateString).toLocaleString();
-    } catch {
-      return "N/A";
-    }
-  };
+  // ============================================================
+  // LIVE PROCESSING STATUS POLLING
+  // ============================================================
 
-  const formatTimestamp = (seconds) => {
-    if (!Number.isFinite(seconds)) return "00:00";
+  useEffect(() => {
+    if (!meetingId || !meeting) return;
 
-    const totalSeconds = Math.floor(seconds);
-    const minutes = Math.floor(totalSeconds / 60);
-    const remainingSeconds = totalSeconds % 60;
+    const processingStatuses = [
+      "processing",
+      "transcribing",
+      "diarizing",
+      "analyzing",
+    ];
 
-    return `${String(minutes).padStart(2, "0")}:${String(
-      remainingSeconds
-    ).padStart(2, "0")}`;
-  };
+    const shouldPoll = processingStatuses.includes(
+      meeting.status
+    );
 
-  const formatDuration = (seconds) => {
-    if (!seconds || seconds <= 0) return "N/A";
-
-    const totalSeconds = Math.floor(seconds);
-
-    const hours = Math.floor(totalSeconds / 3600);
-    const minutes = Math.floor((totalSeconds % 3600) / 60);
-    const remainingSeconds = totalSeconds % 60;
-
-    if (hours > 0) {
-      return `${hours}h ${minutes}m ${remainingSeconds}s`;
+    if (!shouldPoll) {
+      return;
     }
 
-    return `${minutes}m ${remainingSeconds}s`;
-  };
+    const interval = setInterval(async () => {
+      try {
+        const response = await api.get(
+          `/meetings/${meetingId}`
+        );
 
-  const safeJsonParse = (value, fallback = []) => {
-    if (!value) return fallback;
+        setMeeting(response.data);
 
-    if (Array.isArray(value)) {
-      return value;
-    }
+        // Once completed, refresh all meeting data.
+        if (response.data.status === "completed") {
+          await loadMeetingData();
+        }
 
-    try {
-      return JSON.parse(value);
-    } catch {
-      return fallback;
-    }
-  };
-
-  const getStatusLabel = (status) => {
-    const labels = {
-      uploaded: "Uploaded",
-      audio_ready: "Audio Ready",
-      transcribing: "Transcribing",
-      transcribed: "Transcribed",
-      diarizing: "Identifying Speakers",
-      analyzing: "Analyzing",
-      completed: "Completed",
-      processing: "Processing",
-      failed: "Failed",
-      transcription_failed: "Transcription Failed",
-      diarization_failed: "Diarization Failed",
-      analysis_failed: "Analysis Failed",
-    };
-
-    return labels[status] || status || "Unknown";
-  };
-
-  const getStatusClass = (status) => {
-    if (status === "completed") {
-      return "bg-green-100 text-green-700 border-green-200";
-    }
-
-    if (
-      [
-        "transcribing",
-        "diarizing",
-        "analyzing",
-        "processing",
-      ].includes(status)
-    ) {
-      return "bg-blue-100 text-blue-700 border-blue-200";
-    }
-
-    if (
-      [
-        "failed",
-        "transcription_failed",
-        "diarization_failed",
-        "analysis_failed",
-      ].includes(status)
-    ) {
-      return "bg-red-100 text-red-700 border-red-200";
-    }
-
-    return "bg-gray-100 text-gray-700 border-gray-200";
-  };
-
-  const toggleSection = (section) => {
-    setExpandedSections((previous) => ({
-      ...previous,
-      [section]: !previous[section],
-    }));
-  };
-
-  // ---------------------------------------------------------
-  // FETCH MEETING
-  // ---------------------------------------------------------
-
-  const loadMeeting = async (showLoader = true) => {
-    try {
-      if (showLoader) {
-        setLoading(true);
-      } else {
-        setRefreshing(true);
+      } catch (err) {
+        console.error(
+          "Failed to refresh processing status:",
+          err
+        );
       }
+    }, 2000);
 
-      setError("");
+    return () => clearInterval(interval);
+  }, [meetingId, meeting?.status]);
 
-      const response = await api.get(`/meetings/${meetingId}`);
 
-      setMeeting(response.data);
+  // ============================================================
+  // AUTO SCROLL ACTIVE TRANSCRIPT SEGMENT
+  // ============================================================
+
+  useEffect(() => {
+    if (!transcript?.segments?.length) return;
+
+    const activeIndex = transcript.segments.findIndex(
+      (segment) =>
+        audioCurrentTime >= segment.start &&
+        audioCurrentTime < segment.end
+    );
+
+    if (
+      activeIndex !== -1 &&
+      activeIndex !== lastActiveSegment.current
+    ) {
+      lastActiveSegment.current = activeIndex;
+
+      const element =
+        transcriptRefs.current[activeIndex];
+
+      if (element) {
+        element.scrollIntoView({
+          behavior: "smooth",
+          block: "center",
+        });
+      }
+    }
+  }, [audioCurrentTime, transcript]);
+
+
+  // ============================================================
+  // LOAD MEETING
+  // ============================================================
+
+  const loadMeeting = async () => {
+    setLoading(true);
+    setError("");
+
+    try {
+      await loadMeetingData();
     } catch (err) {
-      console.error("Failed to load meeting:", err);
+      console.error(err);
 
       setError(
         err.response?.data?.detail ||
-          "Failed to load meeting details."
+          "Failed to load meeting."
       );
     } finally {
       setLoading(false);
-      setRefreshing(false);
     }
   };
 
-  // ---------------------------------------------------------
-  // FETCH TRANSCRIPT
-  // ---------------------------------------------------------
 
-  const loadTranscript = async () => {
+  // ============================================================
+  // LOAD ALL MEETING DATA
+  // ============================================================
+
+  const loadMeetingData = async () => {
+    const meetingResponse = await api.get(
+      `/meetings/${meetingId}`
+    );
+
+    const meetingData = meetingResponse.data;
+
+    setMeeting(meetingData);
+
+    // ----------------------------------------------------------
+    // Transcript
+    // ----------------------------------------------------------
+
     try {
-      const response = await api.get(
+      const transcriptResponse = await api.get(
         `/meetings/${meetingId}/transcript`
       );
 
-      setTranscript(response.data);
-    } catch (err) {
-      if (err.response?.status !== 404) {
-        console.error("Failed to load transcript:", err);
-      }
-
+      setTranscript(transcriptResponse.data);
+    } catch {
       setTranscript(null);
     }
-  };
 
-  // ---------------------------------------------------------
-  // FETCH ACTION ITEMS
-  // ---------------------------------------------------------
+    // ----------------------------------------------------------
+    // Action Items
+    // ----------------------------------------------------------
 
-  const loadActionItems = async () => {
     try {
-      const response = await api.get(
+      const actionResponse = await api.get(
         `/meetings/${meetingId}/action-items`
       );
 
-      setActionItems(response.data || []);
-    } catch (err) {
-      if (err.response?.status !== 404) {
-        console.error("Failed to load action items:", err);
-      }
-
+      setActionItems(actionResponse.data || []);
+    } catch {
       setActionItems([]);
+    }
+
+    // ----------------------------------------------------------
+    // Speaker Analytics
+    // ----------------------------------------------------------
+
+    try {
+      const speakerResponse = await api.get(
+        `/meetings/${meetingId}/speaker-analytics`
+      );
+
+      setSpeakerAnalytics(
+        speakerResponse.data || []
+      );
+    } catch {
+      setSpeakerAnalytics([]);
+    }
+
+    // ----------------------------------------------------------
+    // Audio
+    // ----------------------------------------------------------
+
+    if (
+      meetingData.status === "completed" ||
+      meetingData.audio_path
+    ) {
+      loadAudio();
     }
   };
 
-  // ---------------------------------------------------------
-  // INITIAL LOAD
-  // ---------------------------------------------------------
 
-  useEffect(() => {
-    const loadData = async () => {
-      await loadMeeting();
-      await Promise.all([
-        loadTranscript(),
-        loadActionItems(),
-      ]);
-    };
-
-    loadData();
-  }, [meetingId]);
-
-  // ---------------------------------------------------------
-  // AUDIO LOAD
-  // ---------------------------------------------------------
+  // ============================================================
+  // LOAD AUDIO
+  // ============================================================
 
   const loadAudio = async () => {
     try {
-      setAudioLoading(true);
-
       const response = await api.get(
         `/meetings/${meetingId}/audio`,
         {
@@ -316,422 +260,294 @@ export default function MeetingDetails() {
         }
       );
 
-      const url = URL.createObjectURL(response.data);
+      const url = URL.createObjectURL(
+        response.data
+      );
 
-      setAudioUrl(url);
+      setAudioUrl((oldUrl) => {
+        if (oldUrl) {
+          URL.revokeObjectURL(oldUrl);
+        }
+
+        return url;
+      });
+
     } catch (err) {
-      console.error("Failed to load audio:", err);
-    } finally {
-      setAudioLoading(false);
+      console.error(
+        "Failed to load audio:",
+        err
+      );
     }
   };
 
+
+  // ============================================================
+  // CLEAN AUDIO URL
+  // ============================================================
+
   useEffect(() => {
-    loadAudio();
-
     return () => {
-      setAudioUrl((currentUrl) => {
-        if (currentUrl) {
-          URL.revokeObjectURL(currentUrl);
-        }
-
-        return "";
-      });
+      if (audioUrl) {
+        URL.revokeObjectURL(audioUrl);
+      }
     };
-  }, [meetingId]);
+  }, [audioUrl]);
 
-  // ---------------------------------------------------------
-  // AUDIO EVENTS
-  // ---------------------------------------------------------
+
+  // ============================================================
+  // FORMAT TIMESTAMP
+  // ============================================================
+
+  const formatTimestamp = (seconds) => {
+    if (
+      seconds === null ||
+      seconds === undefined ||
+      Number.isNaN(seconds)
+    ) {
+      return "00:00";
+    }
+
+    const totalSeconds = Math.floor(seconds);
+
+    const minutes = Math.floor(
+      totalSeconds / 60
+    );
+
+    const remainingSeconds =
+      totalSeconds % 60;
+
+    return `${String(minutes).padStart(
+      2,
+      "0"
+    )}:${String(remainingSeconds).padStart(
+      2,
+      "0"
+    )}`;
+  };
+
+
+  // ============================================================
+  // AUDIO TIME UPDATE
+  // ============================================================
 
   const handleAudioTimeUpdate = () => {
     if (!audioRef.current) return;
 
-    setAudioCurrentTime(audioRef.current.currentTime);
+    setAudioCurrentTime(
+      audioRef.current.currentTime
+    );
   };
+
+
+  // ============================================================
+  // AUDIO LOADED
+  // ============================================================
 
   const handleAudioLoaded = () => {
     if (!audioRef.current) return;
 
-    setAudioDuration(audioRef.current.duration || 0);
+    setAudioDuration(
+      audioRef.current.duration || 0
+    );
   };
 
-  const handleAudioPlay = () => {
-    setAudioPlaying(true);
-  };
 
-  const handleAudioPause = () => {
-    setAudioPlaying(false);
-  };
-
-  const handleAudioEnded = () => {
-    setAudioPlaying(false);
-  };
-
-  // ---------------------------------------------------------
-  // PLAY / PAUSE
-  // ---------------------------------------------------------
-
-  const toggleAudio = async () => {
-    if (!audioRef.current) return;
-
-    try {
-      if (audioRef.current.paused) {
-        await audioRef.current.play();
-      } else {
-        audioRef.current.pause();
-      }
-    } catch (err) {
-      console.error("Audio playback failed:", err);
-    }
-  };
-
-  // ---------------------------------------------------------
-  // JUMP TO TIMESTAMP
-  // ---------------------------------------------------------
+  // ============================================================
+  // JUMP TO TRANSCRIPT TIMESTAMP
+  // ============================================================
 
   const jumpToTimestamp = (seconds) => {
     if (!audioRef.current) return;
 
     audioRef.current.currentTime = seconds;
+
     setAudioCurrentTime(seconds);
 
-    audioRef.current
-      .play()
-      .catch((err) => console.error("Playback failed:", err));
+    audioRef.current.play().catch(() => {});
   };
 
-  // ---------------------------------------------------------
-  // ACTIVE TRANSCRIPT SEGMENT
-  // ---------------------------------------------------------
 
-  const transcriptSegments = useMemo(() => {
-    if (!transcript?.segments) return [];
+  // ============================================================
+  // MANUAL PROCESS
+  // ============================================================
 
-    if (Array.isArray(transcript.segments)) {
-      return transcript.segments;
-    }
+  const processMeeting = async () => {
+    setProcessing(true);
+    setError("");
 
-    return safeJsonParse(transcript.segments, []);
-  }, [transcript]);
-
-  const speakers = useMemo(() => {
-    const uniqueSpeakers = new Set();
-
-    transcriptSegments.forEach((segment) => {
-      if (segment.speaker) {
-        uniqueSpeakers.add(segment.speaker);
-      }
-    });
-
-    return Array.from(uniqueSpeakers);
-  }, [transcriptSegments]);
-
-  const activeSegmentIndex = useMemo(() => {
-    if (!transcriptSegments.length) return -1;
-
-    return transcriptSegments.findIndex(
-      (segment) =>
-        audioCurrentTime >= Number(segment.start || 0) &&
-        audioCurrentTime < Number(segment.end || 0)
-    );
-  }, [audioCurrentTime, transcriptSegments]);
-
-  // ---------------------------------------------------------
-  // AUTO SCROLL ACTIVE TRANSCRIPT
-  // ---------------------------------------------------------
-
-  useEffect(() => {
-    if (
-      activeSegmentIndex === -1 ||
-      activeSegmentIndex === lastActiveSegment.current
-    ) {
-      return;
-    }
-
-    const element =
-      transcriptRefs.current[activeSegmentIndex];
-
-    if (element) {
-      element.scrollIntoView({
-        behavior: "smooth",
-        block: "center",
-      });
-    }
-
-    lastActiveSegment.current = activeSegmentIndex;
-  }, [activeSegmentIndex]);
-
-  // ---------------------------------------------------------
-  // FILTERED TRANSCRIPT
-  // ---------------------------------------------------------
-
-  const filteredTranscript = useMemo(() => {
-    const search = transcriptSearch
-      .trim()
-      .toLowerCase();
-
-    return transcriptSegments
-      .map((segment, index) => ({
-        ...segment,
-        originalIndex: index,
-      }))
-      .filter((segment) => {
-        const matchesSearch =
-          !search ||
-          String(segment.text || "")
-            .toLowerCase()
-            .includes(search);
-
-        const matchesSpeaker =
-          speakerFilter === "all" ||
-          segment.speaker === speakerFilter;
-
-        return matchesSearch && matchesSpeaker;
-      });
-  }, [
-    transcriptSegments,
-    transcriptSearch,
-    speakerFilter,
-  ]);
-
-  // ---------------------------------------------------------
-  // TRANSCRIBE
-  // ---------------------------------------------------------
-
-  const handleTranscribe = async () => {
     try {
-      setProcessing(true);
-      setProcessingStep("Transcribing audio...");
-      setError("");
+      await api.post(
+        `/meetings/${meetingId}/process`
+      );
 
+      const response = await api.get(
+        `/meetings/${meetingId}`
+      );
+
+      setMeeting(response.data);
+
+    } catch (err) {
+      setError(
+        err.response?.data?.detail ||
+          "Failed to start processing."
+      );
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+
+  // ============================================================
+  // TRANSCRIBE MANUALLY
+  // ============================================================
+
+  const transcribeMeeting = async () => {
+    setProcessing(true);
+    setError("");
+
+    try {
       await api.post(
         `/meetings/${meetingId}/transcribe`
       );
 
-      await Promise.all([
-        loadMeeting(false),
-        loadTranscript(),
-      ]);
-    } catch (err) {
-      console.error("Transcription failed:", err);
+      await loadMeetingData();
 
+    } catch (err) {
       setError(
         err.response?.data?.detail ||
           "Transcription failed."
       );
     } finally {
       setProcessing(false);
-      setProcessingStep("");
     }
   };
 
-  // ---------------------------------------------------------
-  // DIARIZATION
-  // ---------------------------------------------------------
 
-  const handleDiarize = async () => {
+  // ============================================================
+  // DIARIZE MANUALLY
+  // ============================================================
+
+  const diarizeMeeting = async () => {
+    setProcessing(true);
+    setError("");
+
     try {
-      setProcessing(true);
-      setProcessingStep("Identifying speakers...");
-      setError("");
-
       await api.post(
         `/meetings/${meetingId}/diarize`
       );
 
-      await Promise.all([
-        loadMeeting(false),
-        loadTranscript(),
-      ]);
-    } catch (err) {
-      console.error("Diarization failed:", err);
+      await loadMeetingData();
 
+    } catch (err) {
       setError(
         err.response?.data?.detail ||
           "Speaker identification failed."
       );
     } finally {
       setProcessing(false);
-      setProcessingStep("");
     }
   };
 
-  // ---------------------------------------------------------
-  // AI ANALYSIS
-  // ---------------------------------------------------------
 
-  const handleAnalyze = async () => {
+  // ============================================================
+  // ANALYZE MANUALLY
+  // ============================================================
+
+  const analyzeMeeting = async () => {
+    setProcessing(true);
+    setError("");
+
     try {
-      setProcessing(true);
-      setProcessingStep(
-        "Analyzing meeting with AI..."
-      );
-      setError("");
-
       await api.post(
         `/meetings/${meetingId}/analyze`
       );
 
-      await Promise.all([
-        loadMeeting(false),
-        loadTranscript(),
-        loadActionItems(),
-      ]);
-    } catch (err) {
-      console.error("Analysis failed:", err);
+      await loadMeetingData();
 
+    } catch (err) {
       setError(
         err.response?.data?.detail ||
           "AI analysis failed."
       );
     } finally {
       setProcessing(false);
-      setProcessingStep("");
     }
   };
 
-  // ---------------------------------------------------------
-  // REFRESH
-  // ---------------------------------------------------------
 
-  const handleRefresh = async () => {
-    await Promise.all([
-      loadMeeting(false),
-      loadTranscript(),
-      loadActionItems(),
-    ]);
-  };
+  // ============================================================
+  // ACTION ITEM STATUS
+  // ============================================================
 
-  // ---------------------------------------------------------
-  // ACTION ITEM UPDATE
-  // ---------------------------------------------------------
-
-  const updateActionItem = async (
-    actionItemId,
-    updates
+  const updateActionStatus = async (
+    actionId,
+    status
   ) => {
     try {
       await api.patch(
-        `/meetings/action-items/${actionItemId}`,
-        updates
+        `/meetings/action-items/${actionId}`,
+        {
+          status,
+        }
       );
 
-      await loadActionItems();
+      const response = await api.get(
+        `/meetings/${meetingId}/action-items`
+      );
+
+      setActionItems(
+        response.data || []
+      );
+
     } catch (err) {
       console.error(
         "Failed to update action item:",
         err
       );
+    }
+  };
 
-      setError(
-        err.response?.data?.detail ||
-          "Failed to update action item."
+
+  // ============================================================
+  // ACTION ITEM PRIORITY
+  // ============================================================
+
+  const updateActionPriority = async (
+    actionId,
+    priority
+  ) => {
+    try {
+      await api.patch(
+        `/meetings/action-items/${actionId}`,
+        {
+          priority,
+        }
+      );
+
+      const response = await api.get(
+        `/meetings/${meetingId}/action-items`
+      );
+
+      setActionItems(
+        response.data || []
+      );
+
+    } catch (err) {
+      console.error(
+        "Failed to update priority:",
+        err
       );
     }
   };
 
-  // ---------------------------------------------------------
-  // ACTION ITEM STATUS
-  // ---------------------------------------------------------
 
-  const handleActionStatusChange = (
-    actionItem,
-    status
-  ) => {
-    updateActionItem(actionItem.id, {
-      status,
-    });
-  };
-
-  // ---------------------------------------------------------
-  // ACTION ITEM PRIORITY
-  // ---------------------------------------------------------
-
-  const handleActionPriorityChange = (
-    actionItem,
-    priority
-  ) => {
-    updateActionItem(actionItem.id, {
-      priority,
-    });
-  };
-
-  // ---------------------------------------------------------
-  // OVERDUE CHECK
-  // ---------------------------------------------------------
-
-  const isOverdue = (actionItem) => {
-    if (!actionItem.deadline) return false;
-
-    if (actionItem.status === "completed") {
-      return false;
-    }
-
-    const deadline = new Date(
-      actionItem.deadline
-    );
-
-    if (Number.isNaN(deadline.getTime())) {
-      return false;
-    }
-
-    return deadline < new Date();
-  };
-
-  // ---------------------------------------------------------
-  // FILTERED ACTION ITEMS
-  // ---------------------------------------------------------
-
-  const filteredActionItems = useMemo(() => {
-    return actionItems.filter((item) => {
-      if (actionFilter === "all") return true;
-
-      if (actionFilter === "overdue") {
-        return isOverdue(item);
-      }
-
-      return item.status === actionFilter;
-    });
-  }, [actionItems, actionFilter]);
-
-  // ---------------------------------------------------------
-  // ACTION ITEM STATS
-  // ---------------------------------------------------------
-
-  const actionStats = useMemo(() => {
-    const total = actionItems.length;
-
-    const pending = actionItems.filter(
-      (item) => item.status === "pending"
-    ).length;
-
-    const inProgress = actionItems.filter(
-      (item) => item.status === "in_progress"
-    ).length;
-
-    const completed = actionItems.filter(
-      (item) => item.status === "completed"
-    ).length;
-
-    const overdue = actionItems.filter(
-      (item) => isOverdue(item)
-    ).length;
-
-    return {
-      total,
-      pending,
-      inProgress,
-      completed,
-      overdue,
-    };
-  }, [actionItems]);
-
-  // ---------------------------------------------------------
-  // PDF REPORT
-  // ---------------------------------------------------------
+  // ============================================================
+  // DOWNLOAD PDF REPORT
+  // ============================================================
 
   const downloadReport = async () => {
+    setDownloadingReport(true);
+
     try {
       const response = await api.get(
         `/meetings/${meetingId}/report`,
@@ -747,21 +563,25 @@ export default function MeetingDetails() {
         }
       );
 
-      const url = window.URL.createObjectURL(
-        blob
-      );
+      const url =
+        window.URL.createObjectURL(blob);
 
-      const link = document.createElement("a");
+      const link =
+        document.createElement("a");
 
       link.href = url;
-      link.download = `meeting_report_${meetingId}.pdf`;
+
+      link.download =
+        `meeting_report_${meetingId}.pdf`;
 
       document.body.appendChild(link);
+
       link.click();
 
       link.remove();
 
       window.URL.revokeObjectURL(url);
+
     } catch (err) {
       console.error(
         "Failed to download report:",
@@ -769,183 +589,349 @@ export default function MeetingDetails() {
       );
 
       setError(
-        err.response?.data?.detail ||
-          "Failed to generate meeting report."
+        "Failed to download meeting report."
       );
+    } finally {
+      setDownloadingReport(false);
     }
   };
 
-  // ---------------------------------------------------------
-  // MEETING SCORE
-  // ---------------------------------------------------------
 
-  const meetingScore =
-    meeting?.effectiveness_score ?? null;
+  // ============================================================
+  // HELPER FUNCTIONS
+  // ============================================================
 
-  const meetingRating =
-    meeting?.effectiveness_rating || "";
+  const getStatusLabel = (status) => {
+    const labels = {
+      uploaded: "Uploaded",
+      audio_ready: "Ready",
+      processing: "Processing",
+      transcribing: "Transcribing",
+      transcribed: "Transcribed",
+      diarizing: "Identifying Speakers",
+      analyzing: "AI Analysis",
+      completed: "Completed",
+      processing_failed: "Processing Failed",
+      transcription_failed:
+        "Transcription Failed",
+      diarization_failed:
+        "Speaker Identification Failed",
+      analysis_failed:
+        "Analysis Failed",
+    };
 
-  const scoreBreakdown = meeting?.score_breakdown || {};
+    return (
+      labels[status] ||
+      status ||
+      "Unknown"
+    );
+  };
 
-  // ---------------------------------------------------------
-  // AI DATA
-  // ---------------------------------------------------------
 
-  const keyPoints = safeJsonParse(
-    meeting?.key_points,
-    []
-  );
+  const getStatusClasses = (status) => {
+    if (status === "completed") {
+      return "bg-green-100 text-green-700";
+    }
 
-  const decisions = safeJsonParse(
-    meeting?.decisions,
-    []
-  );
+    if (
+      [
+        "processing",
+        "transcribing",
+        "diarizing",
+        "analyzing",
+      ].includes(status)
+    ) {
+      return "bg-blue-100 text-blue-700";
+    }
 
-  const insights = safeJsonParse(
-    meeting?.meeting_insights,
-    []
-  );
+    if (
+      status?.includes("failed")
+    ) {
+      return "bg-red-100 text-red-700";
+    }
 
-  const recommendations = safeJsonParse(
-    meeting?.meeting_recommendations,
-    []
-  );
+    return "bg-gray-100 text-gray-700";
+  };
 
-  // ---------------------------------------------------------
-  // LOADING STATE
-  // ---------------------------------------------------------
+
+  const isOverdue = (deadline) => {
+    if (
+      !deadline ||
+      deadline === "Not mentioned"
+    ) {
+      return false;
+    }
+
+    const parsedDate =
+      new Date(deadline);
+
+    if (Number.isNaN(parsedDate.getTime())) {
+      return false;
+    }
+
+    return (
+      parsedDate < new Date()
+    );
+  };
+
+
+  // ============================================================
+  // TRANSCRIPT FILTERING
+  // ============================================================
+
+  const transcriptSegments =
+    transcript?.segments || [];
+
+  const speakers = [
+    ...new Set(
+      transcriptSegments
+        .map(
+          (segment) =>
+            segment.speaker
+        )
+        .filter(Boolean)
+    ),
+  ];
+
+  const filteredTranscript =
+    transcriptSegments.filter(
+      (segment) => {
+
+        const matchesSearch =
+          !transcriptSearch ||
+          segment.text
+            ?.toLowerCase()
+            .includes(
+              transcriptSearch.toLowerCase()
+            ) ||
+          segment.speaker
+            ?.toLowerCase()
+            .includes(
+              transcriptSearch.toLowerCase()
+            );
+
+        const matchesSpeaker =
+          speakerFilter === "all" ||
+          segment.speaker ===
+            speakerFilter;
+
+        return (
+          matchesSearch &&
+          matchesSpeaker
+        );
+      }
+    );
+
+
+  // ============================================================
+  // ACTION ITEM FILTERING
+  // ============================================================
+
+  const filteredActionItems =
+    actionItems.filter(
+      (item) => {
+
+        if (
+          actionFilter === "all"
+        ) {
+          return true;
+        }
+
+        if (
+          actionFilter === "overdue"
+        ) {
+          return isOverdue(
+            item.deadline
+          );
+        }
+
+        return (
+          item.status ===
+          actionFilter
+        );
+      }
+    );
+
+
+  const completedActions =
+    actionItems.filter(
+      (item) =>
+        item.status ===
+        "completed"
+    ).length;
+
+  const pendingActions =
+    actionItems.filter(
+      (item) =>
+        item.status ===
+        "pending"
+    ).length;
+
+  const inProgressActions =
+    actionItems.filter(
+      (item) =>
+        item.status ===
+        "in_progress"
+    ).length;
+
+  const overdueActions =
+    actionItems.filter(
+      (item) =>
+        isOverdue(item.deadline) &&
+        item.status !== "completed"
+    ).length;
+
+
+  // ============================================================
+  // SCORE HELPERS
+  // ============================================================
+
+  const getScoreLabel = (score) => {
+    if (score === null || score === undefined) {
+      return "Not available";
+    }
+
+    if (score >= 85) {
+      return "Excellent";
+    }
+
+    if (score >= 70) {
+      return "Good";
+    }
+
+    if (score >= 50) {
+      return "Needs Improvement";
+    }
+
+    return "Poor";
+  };
+
+
+  // ============================================================
+  // LOADING
+  // ============================================================
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="flex flex-col items-center gap-3">
-          <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+      <div className="flex min-h-screen items-center justify-center">
+        <div className="text-center">
 
-          <p className="text-gray-600">
+          <Loader2
+            className="mx-auto mb-3 animate-spin"
+            size={32}
+          />
+
+          <p className="text-gray-500">
             Loading meeting...
           </p>
+
         </div>
       </div>
     );
   }
 
-  // ---------------------------------------------------------
+
+  // ============================================================
   // ERROR / NOT FOUND
-  // ---------------------------------------------------------
+  // ============================================================
 
   if (!meeting) {
     return (
-      <div className="min-h-screen bg-gray-50 p-6">
-        <div className="max-w-4xl mx-auto">
-          <button
-            onClick={() => navigate("/dashboard")}
-            className="flex items-center gap-2 text-blue-600 hover:text-blue-700 mb-6"
-          >
-            <ArrowLeft size={18} />
-            Back to Dashboard
-          </button>
+      <div className="min-h-screen p-8">
 
-          <div className="bg-white border border-red-200 rounded-xl p-8 text-center">
-            <AlertCircle className="w-10 h-10 text-red-500 mx-auto mb-3" />
+        <button
+          onClick={() =>
+            navigate("/dashboard")
+          }
+          className="mb-6 flex items-center gap-2 text-gray-600 hover:text-gray-900"
+        >
+          <ArrowLeft size={18} />
+          Back to Dashboard
+        </button>
 
-            <h2 className="text-xl font-semibold text-gray-900">
-              Meeting not found
-            </h2>
-
-            <p className="text-gray-500 mt-2">
-              {error ||
-                "The requested meeting could not be loaded."}
-            </p>
-          </div>
+        <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-red-700">
+          {error ||
+            "Meeting not found."}
         </div>
+
       </div>
     );
   }
 
-  // ---------------------------------------------------------
-  // UI
-  // ---------------------------------------------------------
+
+  // ============================================================
+  // MAIN UI
+  // ============================================================
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* =====================================================
-          HEADER
-      ====================================================== */}
 
-      <header className="bg-white border-b border-gray-200 sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto px-6 py-4">
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-            <div className="flex items-center gap-4">
+      {/* ======================================================
+          HEADER
+      ======================================================= */}
+
+      <header className="border-b bg-white">
+
+        <div className="mx-auto max-w-7xl px-6 py-5">
+
+          <div className="flex flex-wrap items-center justify-between gap-4">
+
+            <div>
+
               <button
                 onClick={() =>
                   navigate("/dashboard")
                 }
-                className="p-2 rounded-lg hover:bg-gray-100 transition"
+                className="mb-3 flex items-center gap-2 text-sm text-gray-500 hover:text-gray-900"
               >
-                <ArrowLeft size={20} />
+                <ArrowLeft size={16} />
+                Back to Dashboard
               </button>
 
-              <div>
-                <div className="flex items-center gap-3 flex-wrap">
-                  <h1 className="text-2xl font-bold text-gray-900">
-                    {meeting.title ||
-                      "Untitled Meeting"}
-                  </h1>
+              <h1 className="text-2xl font-bold text-gray-900">
+                {meeting.title ||
+                  meeting.file_name ||
+                  "Meeting"}
+              </h1>
 
-                  <span
-                    className={`px-3 py-1 text-xs font-medium rounded-full border ${getStatusClass(
-                      meeting.status
-                    )}`}
-                  >
-                    {getStatusLabel(
-                      meeting.status
+              <div className="mt-2 flex flex-wrap items-center gap-3 text-sm text-gray-500">
+
+                <span className="flex items-center gap-1">
+                  <FileText size={15} />
+                  {meeting.file_name}
+                </span>
+
+                {meeting.duration && (
+                  <span className="flex items-center gap-1">
+                    <Clock size={15} />
+                    {formatTimestamp(
+                      meeting.duration
                     )}
                   </span>
-                </div>
+                )}
 
-                <div className="flex flex-wrap items-center gap-4 mt-2 text-sm text-gray-500">
-                  <span className="flex items-center gap-1">
-                    <FileText size={15} />
-
-                    {meeting.file_name}
-                  </span>
-
-                  <span className="flex items-center gap-1">
-                    <CalendarDays size={15} />
-
-                    {formatDate(
-                      meeting.created_at
-                    )}
-                  </span>
-
-                  {meeting.duration && (
-                    <span className="flex items-center gap-1">
-                      <Clock3 size={15} />
-
-                      {formatDuration(
-                        meeting.duration
-                      )}
-                    </span>
+                <span
+                  className={`rounded-full px-3 py-1 text-xs font-medium ${getStatusClasses(
+                    meeting.status
+                  )}`}
+                >
+                  {getStatusLabel(
+                    meeting.status
                   )}
-                </div>
+                </span>
+
               </div>
+
             </div>
 
-            <div className="flex items-center gap-2">
-              <button
-                onClick={handleRefresh}
-                disabled={refreshing}
-                className="flex items-center gap-2 px-4 py-2 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50"
-              >
-                <RefreshCw
-                  size={17}
-                  className={
-                    refreshing
-                      ? "animate-spin"
-                      : ""
-                  }
-                />
 
+            <div className="flex items-center gap-2">
+
+              <button
+                onClick={loadMeeting}
+                className="flex items-center gap-2 rounded-lg border bg-white px-4 py-2 text-sm font-medium hover:bg-gray-50"
+              >
+                <RefreshCw size={16} />
                 Refresh
               </button>
 
@@ -953,1481 +939,1438 @@ export default function MeetingDetails() {
                 "completed" && (
                 <button
                   onClick={downloadReport}
-                  className="flex items-center gap-2 px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800"
+                  disabled={
+                    downloadingReport
+                  }
+                  className="flex items-center gap-2 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50"
                 >
-                  <Download size={17} />
+                  {downloadingReport ? (
+                    <Loader2
+                      size={16}
+                      className="animate-spin"
+                    />
+                  ) : (
+                    <Download
+                      size={16}
+                    />
+                  )}
 
                   PDF Report
                 </button>
               )}
+
             </div>
+
           </div>
+
         </div>
+
       </header>
 
-      {/* =====================================================
-          MAIN CONTENT
-      ====================================================== */}
 
-      <main className="max-w-7xl mx-auto px-6 py-6">
+      {/* ======================================================
+          CONTENT
+      ======================================================= */}
+
+      <main className="mx-auto max-w-7xl space-y-6 px-6 py-6">
+
         {/* ERROR */}
 
         {error && (
-          <div className="mb-6 bg-red-50 border border-red-200 text-red-700 rounded-xl p-4 flex items-start gap-3">
-            <AlertCircle
-              size={20}
-              className="mt-0.5 shrink-0"
-            />
+          <div className="flex items-center gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-red-700">
 
-            <div className="flex-1">
-              <p className="font-medium">
-                Something went wrong
-              </p>
+            <AlertCircle size={20} />
 
-              <p className="text-sm mt-1">
-                {error}
-              </p>
-            </div>
+            <span>{error}</span>
+
           </div>
         )}
 
-        {/* ===================================================
-            PROCESSING BAR
-        ==================================================== */}
 
-        {(processing ||
-          [
-            "transcribing",
-            "diarizing",
-            "analyzing",
-            "processing",
-          ].includes(meeting.status)) && (
-          <div className="mb-6 bg-blue-50 border border-blue-200 rounded-xl p-5">
-            <div className="flex items-center gap-3">
-              <Loader2 className="w-5 h-5 text-blue-600 animate-spin" />
+        {/* ====================================================
+            PROCESSING PROGRESS
+        ===================================================== */}
+
+        {[
+          "processing",
+          "transcribing",
+          "diarizing",
+          "analyzing",
+          "processing_failed",
+        ].includes(
+          meeting.status
+        ) && (
+          <ProcessingProgress
+            status={meeting.status}
+          />
+        )}
+
+
+        {/* ====================================================
+            MANUAL PROCESS BUTTON
+        ===================================================== */}
+
+        {[
+          "audio_ready",
+          "uploaded",
+        ].includes(
+          meeting.status
+        ) && (
+          <div className="rounded-xl border bg-white p-6 shadow-sm">
+
+            <div className="flex flex-wrap items-center justify-between gap-4">
 
               <div>
-                <p className="font-semibold text-blue-900">
-                  {processingStep ||
-                    getStatusLabel(
-                      meeting.status
-                    )}
+
+                <h2 className="text-lg font-semibold">
+                  Process Meeting
+                </h2>
+
+                <p className="mt-1 text-sm text-gray-500">
+                  Run transcription, speaker
+                  identification and AI analysis.
                 </p>
 
-                <p className="text-sm text-blue-700 mt-1">
-                  Your meeting is being processed.
-                  This may take a few minutes.
-                </p>
               </div>
-            </div>
-          </div>
-        )}
 
-        {/* ===================================================
-            PIPELINE ACTIONS
-        ==================================================== */}
-
-        <div className="bg-white border border-gray-200 rounded-xl p-5 mb-6">
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-            <div>
-              <h2 className="font-semibold text-gray-900">
-                Processing Pipeline
-              </h2>
-
-              <p className="text-sm text-gray-500 mt-1">
-                Process your meeting step by step using
-                local AI services.
-              </p>
-            </div>
-
-            <div className="flex flex-wrap gap-2">
-              {meeting.status ===
-                "audio_ready" && (
-                <button
-                  onClick={handleTranscribe}
-                  disabled={processing}
-                  className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-                >
-                  <FileAudio size={17} />
-
-                  Transcribe
-                </button>
-              )}
-
-              {meeting.status ===
-                "transcribed" && (
-                <>
-                  <button
-                    onClick={handleDiarize}
-                    disabled={processing}
-                    className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50"
-                  >
-                    <Users size={17} />
-
-                    Identify Speakers
-                  </button>
-
-                  <button
-                    onClick={handleAnalyze}
-                    disabled={processing}
-                    className="flex items-center gap-2 px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 disabled:opacity-50"
-                  >
-                    <Brain size={17} />
-
-                    Analyze with AI
-                  </button>
-                </>
-              )}
-
-              {meeting.status ===
-                "completed" && (
-                <button
-                  onClick={handleAnalyze}
-                  disabled={processing}
-                  className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
-                >
-                  <RefreshCw size={17} />
-
-                  Re-analyze
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* PIPELINE STEPS */}
-
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mt-5">
-            {[
-              {
-                label: "Audio",
-                completed: [
-                  "audio_ready",
-                  "transcribing",
-                  "transcribed",
-                  "diarizing",
-                  "analyzing",
-                  "completed",
-                ].includes(
-                  meeting.status
-                ),
-              },
-              {
-                label: "Transcription",
-                completed: [
-                  "transcribed",
-                  "diarizing",
-                  "analyzing",
-                  "completed",
-                ].includes(
-                  meeting.status
-                ),
-              },
-              {
-                label: "Speakers",
-                completed: [
-                  "diarizing",
-                  "analyzing",
-                  "completed",
-                ].includes(
-                  meeting.status
-                ),
-              },
-              {
-                label: "AI Analysis",
-                completed:
-                  meeting.status ===
-                  "completed",
-              },
-            ].map((step) => (
-              <div
-                key={step.label}
-                className={`flex items-center gap-3 p-3 rounded-lg border ${
-                  step.completed
-                    ? "bg-green-50 border-green-200"
-                    : "bg-gray-50 border-gray-200"
-                }`}
+              <button
+                onClick={processMeeting}
+                disabled={processing}
+                className="flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 font-medium text-white hover:bg-blue-700 disabled:opacity-50"
               >
-                {step.completed ? (
-                  <CheckCircle2
-                    size={19}
-                    className="text-green-600"
+
+                {processing ? (
+                  <Loader2
+                    size={18}
+                    className="animate-spin"
                   />
                 ) : (
-                  <Circle
-                    size={19}
-                    className="text-gray-400"
-                  />
+                  <Play size={18} />
                 )}
 
-                <span
-                  className={`text-sm font-medium ${
-                    step.completed
-                      ? "text-green-800"
-                      : "text-gray-600"
-                  }`}
-                >
-                  {step.label}
-                </span>
-              </div>
-            ))}
+                Start Processing
+
+              </button>
+
+            </div>
+
           </div>
-        </div>
-
-        {/* ===================================================
-            MEETING SCORE
-        ==================================================== */}
-
-        {meetingScore !== null && (
-          <section className="bg-white border border-gray-200 rounded-xl p-6 mb-6">
-            <div className="flex items-center justify-between mb-5">
-              <div>
-                <h2 className="text-lg font-semibold text-gray-900">
-                  Meeting Effectiveness
-                </h2>
-
-                <p className="text-sm text-gray-500 mt-1">
-                  AI-generated assessment based on meeting
-                  activity and outcomes.
-                </p>
-              </div>
-
-              <Target
-                className="text-blue-600"
-                size={25}
-              />
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-              <div className="border border-gray-200 rounded-xl p-5 flex items-center gap-5">
-                <div className="w-24 h-24 rounded-full border-8 border-blue-100 flex items-center justify-center">
-                  <span className="text-2xl font-bold text-blue-700">
-                    {meetingScore}
-                  </span>
-                </div>
-
-                <div>
-                  <p className="text-sm text-gray-500">
-                    Overall Score
-                  </p>
-
-                  <p className="text-xl font-semibold text-gray-900">
-                    {meetingRating}
-                  </p>
-                </div>
-              </div>
-
-              <div className="md:col-span-2 grid grid-cols-2 lg:grid-cols-5 gap-3">
-                {[
-                  [
-                    "Participation",
-                    scoreBreakdown.participation,
-                  ],
-                  [
-                    "Sentiment",
-                    scoreBreakdown.sentiment,
-                  ],
-                  [
-                    "Action Items",
-                    scoreBreakdown.action_items,
-                  ],
-                  [
-                    "Transcript",
-                    scoreBreakdown.transcript_quality,
-                  ],
-                  [
-                    "Efficiency",
-                    scoreBreakdown.efficiency,
-                  ],
-                ].map(([label, value]) => (
-                  <div
-                    key={label}
-                    className="bg-gray-50 rounded-lg p-4"
-                  >
-                    <p className="text-xs text-gray-500">
-                      {label}
-                    </p>
-
-                    <p className="text-xl font-bold text-gray-900 mt-1">
-                      {value ?? 0}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </section>
         )}
 
-        {/* ===================================================
+
+        {/* ====================================================
             AUDIO PLAYER
-        ==================================================== */}
+        ===================================================== */}
 
         {audioUrl && (
-          <section className="bg-white border border-gray-200 rounded-xl p-6 mb-6">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h2 className="text-lg font-semibold text-gray-900">
-                  Meeting Recording
-                </h2>
+          <section className="rounded-xl border bg-white p-6 shadow-sm">
 
-                <p className="text-sm text-gray-500 mt-1">
-                  Listen to the recording and jump directly
-                  to transcript timestamps.
-                </p>
+            <div className="mb-4 flex items-center gap-3">
+
+              <div className="rounded-lg bg-blue-100 p-2 text-blue-600">
+                <Volume2 size={20} />
               </div>
 
-              <Volume2
-                size={22}
-                className="text-blue-600"
-              />
+              <div>
+
+                <h2 className="font-semibold">
+                  Meeting Audio
+                </h2>
+
+                <p className="text-sm text-gray-500">
+                  Play audio and follow the synchronized transcript.
+                </p>
+
+              </div>
+
             </div>
 
             <audio
               ref={audioRef}
               src={audioUrl}
+              controls
+              className="w-full"
               onTimeUpdate={
                 handleAudioTimeUpdate
               }
               onLoadedMetadata={
                 handleAudioLoaded
               }
-              onPlay={handleAudioPlay}
-              onPause={handleAudioPause}
-              onEnded={handleAudioEnded}
-              className="hidden"
             />
 
-            <div className="flex items-center gap-4">
-              <button
-                onClick={toggleAudio}
-                className="w-12 h-12 rounded-full bg-blue-600 text-white flex items-center justify-center hover:bg-blue-700 transition"
-              >
-                {audioPlaying ? (
-                  <Pause size={21} />
-                ) : (
-                  <Play
-                    size={21}
-                    className="ml-0.5"
-                  />
+            <div className="mt-2 flex justify-between text-xs text-gray-500">
+              <span>
+                {formatTimestamp(
+                  audioCurrentTime
                 )}
-              </button>
+              </span>
 
-              <div className="flex-1">
-                <input
-                  type="range"
-                  min="0"
-                  max={audioDuration || 0}
-                  step="0.1"
-                  value={audioCurrentTime}
-                  onChange={(event) => {
-                    const time = Number(
-                      event.target.value
-                    );
-
-                    if (audioRef.current) {
-                      audioRef.current.currentTime =
-                        time;
-                    }
-
-                    setAudioCurrentTime(time);
-                  }}
-                  className="w-full"
-                />
-
-                <div className="flex justify-between text-xs text-gray-500 mt-1">
-                  <span>
-                    {formatTimestamp(
-                      audioCurrentTime
-                    )}
-                  </span>
-
-                  <span>
-                    {formatTimestamp(
-                      audioDuration
-                    )}
-                  </span>
-                </div>
-              </div>
+              <span>
+                {formatTimestamp(
+                  audioDuration
+                )}
+              </span>
             </div>
 
-            {audioLoading && (
-              <p className="text-sm text-gray-500 mt-3">
-                Loading audio...
-              </p>
-            )}
           </section>
         )}
 
-        {/* ===================================================
-            AI SUMMARY
-        ==================================================== */}
 
-        {meeting.summary && (
-          <section className="bg-white border border-gray-200 rounded-xl mb-6">
-            <button
-              onClick={() =>
-                toggleSection("summary")
-              }
-              className="w-full px-6 py-5 flex items-center justify-between text-left"
-            >
-              <div className="flex items-center gap-3">
-                <Brain
-                  size={21}
-                  className="text-blue-600"
-                />
-
-                <div>
-                  <h2 className="font-semibold text-gray-900">
-                    AI Executive Summary
-                  </h2>
-
-                  <p className="text-sm text-gray-500 mt-1">
-                    Generated from the meeting transcript.
-                  </p>
-                </div>
-              </div>
-
-              {expandedSections.summary ? (
-                <ChevronUp size={20} />
-              ) : (
-                <ChevronDown size={20} />
-              )}
-            </button>
-
-            {expandedSections.summary && (
-              <div className="px-6 pb-6">
-                <p className="text-gray-700 leading-7">
-                  {meeting.summary}
-                </p>
-              </div>
-            )}
-          </section>
-        )}
-
-        {/* ===================================================
-            KEY POINTS + DECISIONS
-        ==================================================== */}
-
-        {(keyPoints.length > 0 ||
-          decisions.length > 0) && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-            {/* KEY POINTS */}
-
-            {keyPoints.length > 0 && (
-              <section className="bg-white border border-gray-200 rounded-xl">
-                <button
-                  onClick={() =>
-                    toggleSection("keyPoints")
-                  }
-                  className="w-full px-6 py-5 flex items-center justify-between text-left"
-                >
-                  <div className="flex items-center gap-3">
-                    <MessageSquare
-                      size={21}
-                      className="text-blue-600"
-                    />
-
-                    <h2 className="font-semibold text-gray-900">
-                      Key Points
-                    </h2>
-                  </div>
-
-                  {expandedSections.keyPoints ? (
-                    <ChevronUp size={20} />
-                  ) : (
-                    <ChevronDown size={20} />
-                  )}
-                </button>
-
-                {expandedSections.keyPoints && (
-                  <div className="px-6 pb-6">
-                    <ul className="space-y-3">
-                      {keyPoints.map(
-                        (point, index) => (
-                          <li
-                            key={index}
-                            className="flex gap-3"
-                          >
-                            <span className="w-6 h-6 shrink-0 rounded-full bg-blue-100 text-blue-700 text-xs font-semibold flex items-center justify-center">
-                              {index + 1}
-                            </span>
-
-                            <span className="text-gray-700 leading-6">
-                              {point}
-                            </span>
-                          </li>
-                        )
-                      )}
-                    </ul>
-                  </div>
-                )}
-              </section>
-            )}
-
-            {/* DECISIONS */}
-
-            {decisions.length > 0 && (
-              <section className="bg-white border border-gray-200 rounded-xl">
-                <button
-                  onClick={() =>
-                    toggleSection("decisions")
-                  }
-                  className="w-full px-6 py-5 flex items-center justify-between text-left"
-                >
-                  <div className="flex items-center gap-3">
-                    <CheckCircle2
-                      size={21}
-                      className="text-green-600"
-                    />
-
-                    <h2 className="font-semibold text-gray-900">
-                      Decisions
-                    </h2>
-                  </div>
-
-                  {expandedSections.decisions ? (
-                    <ChevronUp size={20} />
-                  ) : (
-                    <ChevronDown size={20} />
-                  )}
-                </button>
-
-                {expandedSections.decisions && (
-                  <div className="px-6 pb-6">
-                    <ul className="space-y-3">
-                      {decisions.map(
-                        (decision, index) => (
-                          <li
-                            key={index}
-                            className="flex gap-3"
-                          >
-                            <Check
-                              size={18}
-                              className="text-green-600 mt-1 shrink-0"
-                            />
-
-                            <span className="text-gray-700 leading-6">
-                              {decision}
-                            </span>
-                          </li>
-                        )
-                      )}
-                    </ul>
-                  </div>
-                )}
-              </section>
-            )}
-          </div>
-        )}
-
-        {/* ===================================================
-            ACTION ITEMS
-        ==================================================== */}
-
-        <section className="bg-white border border-gray-200 rounded-xl mb-6">
-          <button
-            onClick={() =>
-              toggleSection("actions")
-            }
-            className="w-full px-6 py-5 flex items-center justify-between text-left"
-          >
-            <div className="flex items-center gap-3">
-              <CheckCircle2
-                size={21}
-                className="text-purple-600"
-              />
-
-              <div>
-                <h2 className="font-semibold text-gray-900">
-                  Action Items
-                </h2>
-
-                <p className="text-sm text-gray-500 mt-1">
-                  Tasks extracted from the meeting.
-                </p>
-              </div>
-            </div>
-
-            {expandedSections.actions ? (
-              <ChevronUp size={20} />
-            ) : (
-              <ChevronDown size={20} />
-            )}
-          </button>
-
-          {expandedSections.actions && (
-            <div className="px-6 pb-6">
-              {/* STATS */}
-
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
-                {[
-                  [
-                    "Total",
-                    actionStats.total,
-                  ],
-                  [
-                    "Pending",
-                    actionStats.pending,
-                  ],
-                  [
-                    "In Progress",
-                    actionStats.inProgress,
-                  ],
-                  [
-                    "Completed",
-                    actionStats.completed,
-                  ],
-                  [
-                    "Overdue",
-                    actionStats.overdue,
-                  ],
-                ].map(([label, value]) => (
-                  <div
-                    key={label}
-                    className="bg-gray-50 rounded-lg p-3"
-                  >
-                    <p className="text-xs text-gray-500">
-                      {label}
-                    </p>
-
-                    <p className="text-lg font-bold text-gray-900 mt-1">
-                      {value}
-                    </p>
-                  </div>
-                ))}
-              </div>
-
-              {/* FILTER */}
-
-              <div className="flex flex-wrap gap-2 mb-5">
-                {[
-                  ["all", "All"],
-                  ["pending", "Pending"],
-                  ["in_progress", "In Progress"],
-                  ["completed", "Completed"],
-                  ["overdue", "Overdue"],
-                ].map(([value, label]) => (
-                  <button
-                    key={value}
-                    onClick={() =>
-                      setActionFilter(value)
-                    }
-                    className={`px-3 py-1.5 rounded-lg text-sm ${
-                      actionFilter === value
-                        ? "bg-gray-900 text-white"
-                        : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-
-              {/* ACTION ITEMS */}
-
-              {filteredActionItems.length ===
-              0 ? (
-                <div className="text-center py-10 text-gray-500">
-                  <CheckCircle2
-                    size={30}
-                    className="mx-auto mb-2 opacity-50"
-                  />
-
-                  No action items found.
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {filteredActionItems.map(
-                    (item) => (
-                      <div
-                        key={item.id}
-                        className={`border rounded-xl p-4 ${
-                          isOverdue(item)
-                            ? "border-red-200 bg-red-50"
-                            : "border-gray-200"
-                        }`}
-                      >
-                        <div className="flex flex-col lg:flex-row lg:items-center gap-4">
-                          <div className="flex-1">
-                            <div className="flex items-start gap-3">
-                              {item.status ===
-                              "completed" ? (
-                                <CheckCircle2
-                                  size={20}
-                                  className="text-green-600 mt-0.5 shrink-0"
-                                />
-                              ) : (
-                                <Circle
-                                  size={20}
-                                  className="text-gray-400 mt-0.5 shrink-0"
-                                />
-                              )}
-
-                              <div>
-                                <p
-                                  className={`font-medium ${
-                                    item.status ===
-                                    "completed"
-                                      ? "line-through text-gray-400"
-                                      : "text-gray-900"
-                                  }`}
-                                >
-                                  {item.task}
-                                </p>
-
-                                <div className="flex flex-wrap gap-3 mt-2 text-sm text-gray-500">
-                                  <span>
-                                    Assigned:{" "}
-                                    {item.assigned_to ||
-                                      "Unknown"}
-                                  </span>
-
-                                  <span>
-                                    Deadline:{" "}
-                                    {item.deadline ||
-                                      "Not mentioned"}
-                                  </span>
-
-                                  {isOverdue(
-                                    item
-                                  ) && (
-                                    <span className="text-red-600 font-medium flex items-center gap-1">
-                                      <AlertCircle
-                                        size={14}
-                                      />
-
-                                      Overdue
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="flex flex-wrap items-center gap-2">
-                            <select
-                              value={
-                                item.status ||
-                                "pending"
-                              }
-                              onChange={(event) =>
-                                handleActionStatusChange(
-                                  item,
-                                  event.target.value
-                                )
-                              }
-                              className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
-                            >
-                              <option value="pending">
-                                Pending
-                              </option>
-
-                              <option value="in_progress">
-                                In Progress
-                              </option>
-
-                              <option value="completed">
-                                Completed
-                              </option>
-                            </select>
-
-                            <select
-                              value={
-                                item.priority ||
-                                "medium"
-                              }
-                              onChange={(event) =>
-                                handleActionPriorityChange(
-                                  item,
-                                  event.target.value
-                                )
-                              }
-                              className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
-                            >
-                              <option value="low">
-                                Low
-                              </option>
-
-                              <option value="medium">
-                                Medium
-                              </option>
-
-                              <option value="high">
-                                High
-                              </option>
-                            </select>
-                          </div>
-                        </div>
-                      </div>
-                    )
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-        </section>
-
-        {/* ===================================================
-            ANALYTICS
-        ==================================================== */}
+        {/* ====================================================
+            KPI CARDS
+        ===================================================== */}
 
         {meeting.status ===
           "completed" && (
-          <section className="bg-white border border-gray-200 rounded-xl mb-6">
-            <button
-              onClick={() =>
-                toggleSection("analytics")
-              }
-              className="w-full px-6 py-5 flex items-center justify-between text-left"
-            >
-              <div className="flex items-center gap-3">
-                <BarChart3
-                  size={21}
+          <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+
+            <div className="rounded-xl border bg-white p-5 shadow-sm">
+
+              <div className="mb-3 flex items-center justify-between">
+
+                <span className="text-sm text-gray-500">
+                  Total Words
+                </span>
+
+                <FileText
+                  size={20}
                   className="text-blue-600"
                 />
 
-                <div>
-                  <h2 className="font-semibold text-gray-900">
-                    Meeting Intelligence
-                  </h2>
-
-                  <p className="text-sm text-gray-500 mt-1">
-                    Communication and meeting metrics.
-                  </p>
-                </div>
               </div>
 
-              {expandedSections.analytics ? (
-                <ChevronUp size={20} />
-              ) : (
-                <ChevronDown size={20} />
-              )}
-            </button>
+              <p className="text-2xl font-bold">
+                {meeting.total_words ??
+                  0}
+              </p>
 
-            {expandedSections.analytics && (
-              <div className="px-6 pb-6">
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <div className="bg-gray-50 rounded-xl p-5">
-                    <p className="text-sm text-gray-500">
-                      Total Words
-                    </p>
+            </div>
 
-                    <p className="text-2xl font-bold text-gray-900 mt-1">
-                      {meeting.total_words ??
-                        0}
-                    </p>
-                  </div>
 
-                  <div className="bg-gray-50 rounded-xl p-5">
-                    <p className="text-sm text-gray-500">
-                      Speakers
-                    </p>
+            <div className="rounded-xl border bg-white p-5 shadow-sm">
 
-                    <p className="text-2xl font-bold text-gray-900 mt-1">
-                      {meeting.speaker_count ??
-                        speakers.length ??
-                        0}
-                    </p>
-                  </div>
+              <div className="mb-3 flex items-center justify-between">
 
-                  <div className="bg-green-50 rounded-xl p-5">
-                    <p className="text-sm text-green-700">
-                      Positive
-                    </p>
+                <span className="text-sm text-gray-500">
+                  Speakers
+                </span>
 
-                    <p className="text-2xl font-bold text-green-800 mt-1">
-                      {meeting.positive_sentiment ??
-                        0}
-                    </p>
-                  </div>
+                <Users
+                  size={20}
+                  className="text-purple-600"
+                />
 
-                  <div className="bg-red-50 rounded-xl p-5">
-                    <p className="text-sm text-red-700">
-                      Negative
-                    </p>
-
-                    <p className="text-2xl font-bold text-red-800 mt-1">
-                      {meeting.negative_sentiment ??
-                        0}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
-                  <div className="border border-green-200 bg-green-50 rounded-xl p-5">
-                    <div className="flex items-center gap-2">
-                      <TrendingUp
-                        size={18}
-                        className="text-green-600"
-                      />
-
-                      <span className="font-medium text-green-800">
-                        Positive Sentiment
-                      </span>
-                    </div>
-
-                    <p className="text-3xl font-bold text-green-800 mt-3">
-                      {meeting.positive_sentiment ??
-                        0}
-                    </p>
-                  </div>
-
-                  <div className="border border-red-200 bg-red-50 rounded-xl p-5">
-                    <div className="flex items-center gap-2">
-                      <TrendingDown
-                        size={18}
-                        className="text-red-600"
-                      />
-
-                      <span className="font-medium text-red-800">
-                        Negative Sentiment
-                      </span>
-                    </div>
-
-                    <p className="text-3xl font-bold text-red-800 mt-3">
-                      {meeting.negative_sentiment ??
-                        0}
-                    </p>
-                  </div>
-
-                  <div className="border border-gray-200 bg-gray-50 rounded-xl p-5">
-                    <div className="flex items-center gap-2">
-                      <Minus
-                        size={18}
-                        className="text-gray-600"
-                      />
-
-                      <span className="font-medium text-gray-800">
-                        Neutral Sentiment
-                      </span>
-                    </div>
-
-                    <p className="text-3xl font-bold text-gray-800 mt-3">
-                      {meeting.neutral_sentiment ??
-                        0}
-                    </p>
-                  </div>
-                </div>
               </div>
-            )}
+
+              <p className="text-2xl font-bold">
+                {meeting.speaker_count ??
+                  speakers.length}
+              </p>
+
+            </div>
+
+
+            <div className="rounded-xl border bg-white p-5 shadow-sm">
+
+              <div className="mb-3 flex items-center justify-between">
+
+                <span className="text-sm text-gray-500">
+                  Action Items
+                </span>
+
+                <ListTodo
+                  size={20}
+                  className="text-orange-600"
+                />
+
+              </div>
+
+              <p className="text-2xl font-bold">
+                {actionItems.length}
+              </p>
+
+            </div>
+
+
+            <div className="rounded-xl border bg-white p-5 shadow-sm">
+
+              <div className="mb-3 flex items-center justify-between">
+
+                <span className="text-sm text-gray-500">
+                  Effectiveness
+                </span>
+
+                <BarChart3
+                  size={20}
+                  className="text-green-600"
+                />
+
+              </div>
+
+              <p className="text-2xl font-bold">
+                {meeting.effectiveness_score ??
+                  "—"}
+                {meeting.effectiveness_score !==
+                  null &&
+                  meeting.effectiveness_score !==
+                    undefined &&
+                  "%"}
+              </p>
+
+              <p className="text-xs text-gray-500">
+                {meeting.effectiveness_rating ||
+                  getScoreLabel(
+                    meeting.effectiveness_score
+                  )}
+              </p>
+
+            </div>
+
           </section>
         )}
 
-        {/* ===================================================
-            SPEAKER INTELLIGENCE
-        ==================================================== */}
 
-        {meeting.speaker_analytics &&
-          meeting.speaker_analytics.length >
-            0 && (
-            <section className="bg-white border border-gray-200 rounded-xl mb-6">
-              <button
-                onClick={() =>
-                  toggleSection("speakers")
-                }
-                className="w-full px-6 py-5 flex items-center justify-between text-left"
-              >
-                <div className="flex items-center gap-3">
-                  <Users
-                    size={21}
-                    className="text-purple-600"
-                  />
+        {/* ====================================================
+            MEETING INTELLIGENCE
+        ===================================================== */}
 
-                  <div>
-                    <h2 className="font-semibold text-gray-900">
-                      Speaker Intelligence
-                    </h2>
+        {meeting.status ===
+          "completed" && (
+          <section className="rounded-xl border bg-white p-6 shadow-sm">
 
-                    <p className="text-sm text-gray-500 mt-1">
-                      Participation and speaking distribution.
-                    </p>
-                  </div>
-                </div>
+            <div className="mb-6 flex items-center gap-3">
 
-                {expandedSections.speakers ? (
-                  <ChevronUp size={20} />
+              <div className="rounded-lg bg-purple-100 p-2 text-purple-600">
+                <Brain size={20} />
+              </div>
+
+              <div>
+
+                <h2 className="text-lg font-semibold">
+                  Meeting Intelligence
+                </h2>
+
+                <p className="text-sm text-gray-500">
+                  AI-generated understanding of the meeting.
+                </p>
+
+              </div>
+
+            </div>
+
+
+            {/* SUMMARY */}
+
+            <div className="mb-6">
+
+              <h3 className="mb-2 font-semibold">
+                Executive Summary
+              </h3>
+
+              <p className="leading-7 text-gray-700">
+                {meeting.summary ||
+                  "No summary available."}
+              </p>
+
+            </div>
+
+
+            <div className="grid gap-6 md:grid-cols-2">
+
+              {/* KEY POINTS */}
+
+              <div>
+
+                <h3 className="mb-3 font-semibold">
+                  Key Points
+                </h3>
+
+                {meeting.key_points ? (
+                  <ul className="space-y-2">
+
+                    {(() => {
+                      try {
+                        const points =
+                          typeof meeting.key_points ===
+                          "string"
+                            ? JSON.parse(
+                                meeting.key_points
+                              )
+                            : meeting.key_points;
+
+                        return points.map(
+                          (point, index) => (
+                            <li
+                              key={index}
+                              className="flex gap-2 text-sm text-gray-700"
+                            >
+                              <span className="mt-1 text-blue-600">
+                                •
+                              </span>
+
+                              <span>
+                                {point}
+                              </span>
+                            </li>
+                          )
+                        );
+
+                      } catch {
+                        return (
+                          <p className="text-sm text-gray-600">
+                            {meeting.key_points}
+                          </p>
+                        );
+                      }
+                    })()}
+
+                  </ul>
                 ) : (
-                  <ChevronDown size={20} />
+                  <p className="text-sm text-gray-500">
+                    No key points available.
+                  </p>
                 )}
-              </button>
 
-              {expandedSections.speakers && (
-                <div className="px-6 pb-6">
-                  <div className="overflow-x-auto">
-                    <table className="w-full">
-                      <thead>
-                        <tr className="border-b border-gray-200 text-left">
-                          <th className="py-3 text-sm font-medium text-gray-500">
-                            Speaker
-                          </th>
+              </div>
 
-                          <th className="py-3 text-sm font-medium text-gray-500">
-                            Speaking Time
-                          </th>
 
-                          <th className="py-3 text-sm font-medium text-gray-500">
-                            Words
-                          </th>
+              {/* DECISIONS */}
 
-                          <th className="py-3 text-sm font-medium text-gray-500">
-                            Share
-                          </th>
-                        </tr>
-                      </thead>
+              <div>
 
-                      <tbody>
-                        {meeting.speaker_analytics.map(
-                          (speaker, index) => {
-                            const totalWords =
-                              meeting.total_words ||
-                              1;
+                <h3 className="mb-3 font-semibold">
+                  Decisions
+                </h3>
 
-                            const percentage =
-                              speaker.word_count
-                                ? (
-                                    (speaker.word_count /
-                                      totalWords) *
-                                    100
-                                  ).toFixed(1)
-                                : "0.0";
+                {meeting.decisions ? (
+                  <ul className="space-y-2">
 
-                            return (
-                              <tr
-                                key={
-                                  speaker.id ||
-                                  index
-                                }
-                                className="border-b border-gray-100"
-                              >
-                                <td className="py-4 font-medium text-gray-900">
-                                  {speaker.speaker}
-                                </td>
+                    {(() => {
+                      try {
+                        const decisions =
+                          typeof meeting.decisions ===
+                          "string"
+                            ? JSON.parse(
+                                meeting.decisions
+                              )
+                            : meeting.decisions;
 
-                                <td className="py-4 text-gray-600">
-                                  {formatDuration(
-                                    speaker.speaking_time
-                                  )}
-                                </td>
+                        return decisions.map(
+                          (decision, index) => (
+                            <li
+                              key={index}
+                              className="flex gap-2 text-sm text-gray-700"
+                            >
+                              <CheckCircle
+                                size={16}
+                                className="mt-0.5 shrink-0 text-green-600"
+                              />
 
-                                <td className="py-4 text-gray-600">
-                                  {speaker.word_count ??
-                                    0}
-                                </td>
+                              <span>
+                                {decision}
+                              </span>
+                            </li>
+                          )
+                        );
 
-                                <td className="py-4">
-                                  <div className="flex items-center gap-3">
-                                    <div className="w-24 h-2 bg-gray-200 rounded-full overflow-hidden">
-                                      <div
-                                        className="h-full bg-blue-600 rounded-full"
-                                        style={{
-                                          width: `${Math.min(
-                                            Number(
-                                              percentage
-                                            ),
-                                            100
-                                          )}%`,
-                                        }}
-                                      />
-                                    </div>
+                      } catch {
+                        return (
+                          <p className="text-sm text-gray-600">
+                            {meeting.decisions}
+                          </p>
+                        );
+                      }
+                    })()}
 
-                                    <span className="text-sm text-gray-600">
-                                      {percentage}%
-                                    </span>
-                                  </div>
-                                </td>
-                              </tr>
-                            );
-                          }
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
+                  </ul>
+                ) : (
+                  <p className="text-sm text-gray-500">
+                    No decisions available.
+                  </p>
+                )}
+
+              </div>
+
+            </div>
+
+          </section>
+        )}
+
+
+        {/* ====================================================
+            AI INSIGHTS + RECOMMENDATIONS
+        ===================================================== */}
+
+        {meeting.status ===
+          "completed" && (
+          <section className="grid gap-6 lg:grid-cols-2">
+
+            {/* INSIGHTS */}
+
+            <div className="rounded-xl border bg-white p-6 shadow-sm">
+
+              <div className="mb-5 flex items-center gap-3">
+
+                <div className="rounded-lg bg-yellow-100 p-2 text-yellow-600">
+                  <Lightbulb size={20} />
                 </div>
-              )}
-            </section>
-          )}
-
-        {/* ===================================================
-            AI INSIGHTS
-        ==================================================== */}
-
-        {insights.length > 0 && (
-          <section className="bg-white border border-gray-200 rounded-xl mb-6">
-            <button
-              onClick={() =>
-                toggleSection("insights")
-              }
-              className="w-full px-6 py-5 flex items-center justify-between text-left"
-            >
-              <div className="flex items-center gap-3">
-                <Lightbulb
-                  size={21}
-                  className="text-yellow-500"
-                />
 
                 <div>
-                  <h2 className="font-semibold text-gray-900">
+
+                  <h2 className="font-semibold">
                     AI Insights
                   </h2>
 
-                  <p className="text-sm text-gray-500 mt-1">
-                    Key observations generated from meeting data.
+                  <p className="text-sm text-gray-500">
+                    Important observations from the meeting.
                   </p>
+
                 </div>
+
               </div>
 
-              {expandedSections.insights ? (
-                <ChevronUp size={20} />
-              ) : (
-                <ChevronDown size={20} />
-              )}
-            </button>
+              <div className="space-y-4">
 
-            {expandedSections.insights && (
-              <div className="px-6 pb-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {insights.map(
-                    (insight, index) => {
-                      const type =
-                        insight.type ||
-                        "neutral";
+                {(() => {
+                  try {
+                    const insights =
+                      typeof meeting.meeting_insights ===
+                      "string"
+                        ? JSON.parse(
+                            meeting.meeting_insights
+                          )
+                        : meeting.meeting_insights;
 
-                      const isPositive =
-                        type === "positive";
-
-                      const isNegative =
-                        type === "negative";
-
+                    if (!insights?.length) {
                       return (
-                        <div
-                          key={index}
-                          className={`rounded-xl border p-5 ${
-                            isPositive
-                              ? "bg-green-50 border-green-200"
-                              : isNegative
-                              ? "bg-red-50 border-red-200"
-                              : "bg-gray-50 border-gray-200"
-                          }`}
-                        >
-                          <div className="flex items-start gap-3">
-                            <Lightbulb
-                              size={19}
-                              className={
-                                isPositive
-                                  ? "text-green-600"
-                                  : isNegative
-                                  ? "text-red-600"
-                                  : "text-gray-600"
-                              }
-                            />
-
-                            <div>
-                              <h3 className="font-semibold text-gray-900">
-                                {insight.title ||
-                                  "Insight"}
-                              </h3>
-
-                              <p className="text-sm text-gray-600 mt-2 leading-6">
-                                {
-                                  insight.description
-                                }
-                              </p>
-                            </div>
-                          </div>
-                        </div>
+                        <p className="text-sm text-gray-500">
+                          No insights available.
+                        </p>
                       );
                     }
-                  )}
-                </div>
+
+                    return insights.map(
+                      (insight, index) => (
+                        <div
+                          key={index}
+                          className="rounded-lg border bg-gray-50 p-4"
+                        >
+
+                          <div className="mb-1 flex items-center gap-2">
+
+                            <span className="font-medium">
+                              {insight.title}
+                            </span>
+
+                            {insight.type && (
+                              <span className="rounded-full bg-white px-2 py-0.5 text-xs text-gray-500">
+                                {insight.type}
+                              </span>
+                            )}
+
+                          </div>
+
+                          <p className="text-sm leading-6 text-gray-600">
+                            {insight.description}
+                          </p>
+
+                        </div>
+                      )
+                    );
+
+                  } catch {
+                    return (
+                      <p className="text-sm text-gray-600">
+                        {meeting.meeting_insights}
+                      </p>
+                    );
+                  }
+                })()}
+
               </div>
-            )}
-          </section>
-        )}
 
-        {/* ===================================================
-            AI RECOMMENDATIONS
-        ==================================================== */}
+            </div>
 
-        {recommendations.length > 0 && (
-          <section className="bg-white border border-gray-200 rounded-xl mb-6">
-            <button
-              onClick={() =>
-                toggleSection(
-                  "recommendations"
-                )
-              }
-              className="w-full px-6 py-5 flex items-center justify-between text-left"
-            >
-              <div className="flex items-center gap-3">
-                <Target
-                  size={21}
-                  className="text-blue-600"
-                />
+
+            {/* RECOMMENDATIONS */}
+
+            <div className="rounded-xl border bg-white p-6 shadow-sm">
+
+              <div className="mb-5 flex items-center gap-3">
+
+                <div className="rounded-lg bg-blue-100 p-2 text-blue-600">
+                  <Brain size={20} />
+                </div>
 
                 <div>
-                  <h2 className="font-semibold text-gray-900">
+
+                  <h2 className="font-semibold">
                     AI Recommendations
                   </h2>
 
-                  <p className="text-sm text-gray-500 mt-1">
-                    Suggestions for improving future meetings.
+                  <p className="text-sm text-gray-500">
+                    Suggestions based on meeting data.
                   </p>
+
                 </div>
+
               </div>
 
-              {expandedSections.recommendations ? (
-                <ChevronUp size={20} />
-              ) : (
-                <ChevronDown size={20} />
-              )}
-            </button>
+              <div className="space-y-3">
 
-            {expandedSections.recommendations && (
-              <div className="px-6 pb-6">
-                <div className="space-y-3">
-                  {recommendations.map(
-                    (recommendation, index) => (
-                      <div
-                        key={index}
-                        className="flex gap-3 p-4 bg-blue-50 border border-blue-100 rounded-xl"
-                      >
-                        <div className="w-7 h-7 rounded-full bg-blue-600 text-white flex items-center justify-center text-sm font-semibold shrink-0">
-                          {index + 1}
-                        </div>
+                {(() => {
+                  try {
+                    const recommendations =
+                      typeof meeting.meeting_recommendations ===
+                      "string"
+                        ? JSON.parse(
+                            meeting.meeting_recommendations
+                          )
+                        : meeting.meeting_recommendations;
 
-                        <p className="text-gray-700 leading-6">
-                          {recommendation}
+                    if (
+                      !recommendations?.length
+                    ) {
+                      return (
+                        <p className="text-sm text-gray-500">
+                          No recommendations available.
                         </p>
-                      </div>
-                    )
-                  )}
-                </div>
+                      );
+                    }
+
+                    return recommendations.map(
+                      (
+                        recommendation,
+                        index
+                      ) => (
+                        <div
+                          key={index}
+                          className="flex gap-3 rounded-lg border bg-gray-50 p-4"
+                        >
+
+                          <CheckCircle
+                            size={18}
+                            className="mt-0.5 shrink-0 text-blue-600"
+                          />
+
+                          <p className="text-sm leading-6 text-gray-700">
+                            {recommendation}
+                          </p>
+
+                        </div>
+                      )
+                    );
+
+                  } catch {
+                    return (
+                      <p className="text-sm text-gray-600">
+                        {meeting.meeting_recommendations}
+                      </p>
+                    );
+                  }
+                })()}
+
               </div>
-            )}
+
+            </div>
+
           </section>
         )}
 
-        {/* ===================================================
-            TRANSCRIPT
-        ==================================================== */}
 
-        {transcript && (
-          <section className="bg-white border border-gray-200 rounded-xl mb-6">
-            <button
-              onClick={() =>
-                toggleSection("transcript")
-              }
-              className="w-full px-6 py-5 flex items-center justify-between text-left"
-            >
+        {/* ====================================================
+            EFFECTIVENESS SCORE
+        ===================================================== */}
+
+        {meeting.status ===
+          "completed" &&
+          meeting.effectiveness_score !==
+            null &&
+          meeting.effectiveness_score !==
+            undefined && (
+          <section className="rounded-xl border bg-white p-6 shadow-sm">
+
+            <div className="mb-6 flex items-center gap-3">
+
+              <div className="rounded-lg bg-green-100 p-2 text-green-600">
+                <BarChart3 size={20} />
+              </div>
+
+              <div>
+
+                <h2 className="text-lg font-semibold">
+                  Meeting Effectiveness
+                </h2>
+
+                <p className="text-sm text-gray-500">
+                  Overall meeting quality based on available metrics.
+                </p>
+
+              </div>
+
+            </div>
+
+
+            <div className="grid gap-6 md:grid-cols-3">
+
+              <div className="flex flex-col items-center justify-center rounded-xl bg-gray-50 p-6">
+
+                <div className="text-5xl font-bold text-gray-900">
+                  {meeting.effectiveness_score}
+                </div>
+
+                <div className="mt-2 text-sm text-gray-500">
+                  out of 100
+                </div>
+
+                <div className="mt-3 rounded-full bg-green-100 px-4 py-1 text-sm font-medium text-green-700">
+                  {meeting.effectiveness_rating ||
+                    getScoreLabel(
+                      meeting.effectiveness_score
+                    )}
+                </div>
+
+              </div>
+
+
+              <div className="md:col-span-2">
+
+                {(() => {
+
+                  let breakdown = null;
+
+                  try {
+
+                    if (
+                      meeting.effectiveness_breakdown
+                    ) {
+                      breakdown =
+                        typeof meeting.effectiveness_breakdown ===
+                        "string"
+                          ? JSON.parse(
+                              meeting.effectiveness_breakdown
+                            )
+                          : meeting.effectiveness_breakdown;
+                    }
+
+                  } catch {
+                    breakdown = null;
+                  }
+
+                  if (!breakdown) {
+                    return (
+                      <div className="rounded-xl bg-gray-50 p-6">
+                        <p className="text-sm text-gray-500">
+                          Detailed score breakdown is not available.
+                        </p>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="grid grid-cols-2 gap-4">
+
+                      {Object.entries(
+                        breakdown
+                      ).map(
+                        ([key, value]) => (
+                          <div
+                            key={key}
+                            className="rounded-xl border p-4"
+                          >
+
+                            <p className="text-xs uppercase tracking-wide text-gray-500">
+                              {key.replace(
+                                /_/g,
+                                " "
+                              )}
+                            </p>
+
+                            <p className="mt-2 text-2xl font-bold">
+                              {value}
+                            </p>
+
+                          </div>
+                        )
+                      )}
+
+                    </div>
+                  );
+
+                })()}
+
+              </div>
+
+            </div>
+
+          </section>
+        )}
+
+
+        {/* ====================================================
+            SENTIMENT
+        ===================================================== */}
+
+        {meeting.status ===
+          "completed" && (
+          <section className="rounded-xl border bg-white p-6 shadow-sm">
+
+            <div className="mb-5 flex items-center gap-3">
+
+              <div className="rounded-lg bg-pink-100 p-2 text-pink-600">
+                <MessageSquare size={20} />
+              </div>
+
+              <div>
+
+                <h2 className="font-semibold">
+                  Sentiment Overview
+                </h2>
+
+                <p className="text-sm text-gray-500">
+                  Overall sentiment detected across the transcript.
+                </p>
+
+              </div>
+
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+
+              <div className="rounded-xl border bg-green-50 p-5">
+
+                <p className="text-sm text-green-700">
+                  Positive
+                </p>
+
+                <p className="mt-2 text-3xl font-bold text-green-800">
+                  {meeting.positive_sentiment ??
+                    0}
+                </p>
+
+              </div>
+
+              <div className="rounded-xl border bg-red-50 p-5">
+
+                <p className="text-sm text-red-700">
+                  Negative
+                </p>
+
+                <p className="mt-2 text-3xl font-bold text-red-800">
+                  {meeting.negative_sentiment ??
+                    0}
+                </p>
+
+              </div>
+
+              <div className="rounded-xl border bg-gray-50 p-5">
+
+                <p className="text-sm text-gray-700">
+                  Neutral
+                </p>
+
+                <p className="mt-2 text-3xl font-bold text-gray-800">
+                  {meeting.neutral_sentiment ??
+                    0}
+                </p>
+
+              </div>
+
+            </div>
+
+          </section>
+        )}
+
+
+        {/* ====================================================
+            SPEAKER INTELLIGENCE
+        ===================================================== */}
+
+        {meeting.status ===
+          "completed" &&
+          speakerAnalytics.length >
+            0 && (
+          <section className="rounded-xl border bg-white p-6 shadow-sm">
+
+            <div className="mb-5 flex items-center gap-3">
+
+              <div className="rounded-lg bg-purple-100 p-2 text-purple-600">
+                <Users size={20} />
+              </div>
+
+              <div>
+
+                <h2 className="font-semibold">
+                  Speaker Intelligence
+                </h2>
+
+                <p className="text-sm text-gray-500">
+                  Participation and speaking distribution.
+                </p>
+
+              </div>
+
+            </div>
+
+            <div className="overflow-x-auto">
+
+              <table className="w-full text-left text-sm">
+
+                <thead>
+
+                  <tr className="border-b text-gray-500">
+
+                    <th className="px-4 py-3">
+                      Speaker
+                    </th>
+
+                    <th className="px-4 py-3">
+                      Speaking Time
+                    </th>
+
+                    <th className="px-4 py-3">
+                      Words
+                    </th>
+
+                  </tr>
+
+                </thead>
+
+                <tbody>
+
+                  {speakerAnalytics.map(
+                    (speaker, index) => (
+                      <tr
+                        key={speaker.id || index}
+                        className="border-b last:border-0"
+                      >
+
+                        <td className="px-4 py-3 font-medium">
+                          {speaker.speaker}
+                        </td>
+
+                        <td className="px-4 py-3">
+                          {formatTimestamp(
+                            speaker.speaking_time
+                          )}
+                        </td>
+
+                        <td className="px-4 py-3">
+                          {speaker.word_count}
+                        </td>
+
+                      </tr>
+                    )
+                  )}
+
+                </tbody>
+
+              </table>
+
+            </div>
+
+          </section>
+        )}
+
+
+        {/* ====================================================
+            ACTION ITEMS
+        ===================================================== */}
+
+        {meeting.status ===
+          "completed" && (
+          <section className="rounded-xl border bg-white p-6 shadow-sm">
+
+            <div className="mb-5 flex flex-wrap items-center justify-between gap-4">
+
               <div className="flex items-center gap-3">
-                <FileText
-                  size={21}
-                  className="text-blue-600"
-                />
+
+                <div className="rounded-lg bg-orange-100 p-2 text-orange-600">
+                  <ListTodo size={20} />
+                </div>
 
                 <div>
-                  <h2 className="font-semibold text-gray-900">
+
+                  <h2 className="font-semibold">
+                    Action Items
+                  </h2>
+
+                  <p className="text-sm text-gray-500">
+                    Tasks identified from the meeting.
+                  </p>
+
+                </div>
+
+              </div>
+
+
+              <div className="flex items-center gap-2">
+
+                <Filter
+                  size={16}
+                  className="text-gray-500"
+                />
+
+                <select
+                  value={actionFilter}
+                  onChange={(e) =>
+                    setActionFilter(
+                      e.target.value
+                    )
+                  }
+                  className="rounded-lg border px-3 py-2 text-sm"
+                >
+
+                  <option value="all">
+                    All
+                  </option>
+
+                  <option value="pending">
+                    Pending
+                  </option>
+
+                  <option value="in_progress">
+                    In Progress
+                  </option>
+
+                  <option value="completed">
+                    Completed
+                  </option>
+
+                  <option value="overdue">
+                    Overdue
+                  </option>
+
+                </select>
+
+              </div>
+
+            </div>
+
+
+            {/* ACTION STATS */}
+
+            <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
+
+              <div className="rounded-lg bg-gray-50 p-4">
+
+                <p className="text-xs text-gray-500">
+                  Total
+                </p>
+
+                <p className="mt-1 text-xl font-bold">
+                  {actionItems.length}
+                </p>
+
+              </div>
+
+              <div className="rounded-lg bg-yellow-50 p-4">
+
+                <p className="text-xs text-yellow-700">
+                  Pending
+                </p>
+
+                <p className="mt-1 text-xl font-bold text-yellow-800">
+                  {pendingActions}
+                </p>
+
+              </div>
+
+              <div className="rounded-lg bg-blue-50 p-4">
+
+                <p className="text-xs text-blue-700">
+                  In Progress
+                </p>
+
+                <p className="mt-1 text-xl font-bold text-blue-800">
+                  {inProgressActions}
+                </p>
+
+              </div>
+
+              <div className="rounded-lg bg-green-50 p-4">
+
+                <p className="text-xs text-green-700">
+                  Completed
+                </p>
+
+                <p className="mt-1 text-xl font-bold text-green-800">
+                  {completedActions}
+                </p>
+
+              </div>
+
+            </div>
+
+
+            {overdueActions > 0 && (
+              <div className="mb-5 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                {overdueActions} action item
+                {overdueActions > 1
+                  ? "s"
+                  : ""}{" "}
+                overdue.
+              </div>
+            )}
+
+
+            {filteredActionItems.length ===
+            0 ? (
+              <div className="rounded-xl bg-gray-50 p-8 text-center">
+
+                <ListTodo
+                  size={32}
+                  className="mx-auto mb-3 text-gray-400"
+                />
+
+                <p className="text-gray-500">
+                  No action items found.
+                </p>
+
+              </div>
+            ) : (
+              <div className="space-y-3">
+
+                {filteredActionItems.map(
+                  (item) => (
+                    <div
+                      key={item.id}
+                      className="rounded-xl border p-4"
+                    >
+
+                      <div className="flex flex-wrap items-start justify-between gap-4">
+
+                        <div className="flex-1">
+
+                          <p className="font-medium text-gray-900">
+                            {item.task}
+                          </p>
+
+                          <div className="mt-2 flex flex-wrap gap-2 text-xs">
+
+                            <span className="rounded-full bg-gray-100 px-2 py-1 text-gray-600">
+                              Assigned:{" "}
+                              {item.assigned_to ||
+                                "Unknown"}
+                            </span>
+
+                            <span className="rounded-full bg-gray-100 px-2 py-1 text-gray-600">
+                              Deadline:{" "}
+                              {item.deadline ||
+                                "Not mentioned"}
+                            </span>
+
+                            <span
+                              className={`rounded-full px-2 py-1 ${
+                                item.priority ===
+                                "high"
+                                  ? "bg-red-100 text-red-700"
+                                  : item.priority ===
+                                    "low"
+                                  ? "bg-gray-100 text-gray-600"
+                                  : "bg-yellow-100 text-yellow-700"
+                              }`}
+                            >
+                              {item.priority ||
+                                "medium"}
+                            </span>
+
+                            {isOverdue(
+                              item.deadline
+                            ) &&
+                              item.status !==
+                                "completed" && (
+                                <span className="rounded-full bg-red-100 px-2 py-1 text-red-700">
+                                  Overdue
+                                </span>
+                              )}
+
+                          </div>
+
+                        </div>
+
+
+                        <div className="flex flex-wrap gap-2">
+
+                          <select
+                            value={
+                              item.status ||
+                              "pending"
+                            }
+                            onChange={(e) =>
+                              updateActionStatus(
+                                item.id,
+                                e.target.value
+                              )
+                            }
+                            className="rounded-lg border px-2 py-1.5 text-xs"
+                          >
+
+                            <option value="pending">
+                              Pending
+                            </option>
+
+                            <option value="in_progress">
+                              In Progress
+                            </option>
+
+                            <option value="completed">
+                              Completed
+                            </option>
+
+                          </select>
+
+
+                          <select
+                            value={
+                              item.priority ||
+                              "medium"
+                            }
+                            onChange={(e) =>
+                              updateActionPriority(
+                                item.id,
+                                e.target.value
+                              )
+                            }
+                            className="rounded-lg border px-2 py-1.5 text-xs"
+                          >
+
+                            <option value="low">
+                              Low
+                            </option>
+
+                            <option value="medium">
+                              Medium
+                            </option>
+
+                            <option value="high">
+                              High
+                            </option>
+
+                          </select>
+
+                        </div>
+
+                      </div>
+
+                    </div>
+                  )
+                )}
+
+              </div>
+            )}
+
+          </section>
+        )}
+
+
+        {/* ====================================================
+            TRANSCRIPT
+        ===================================================== */}
+
+        {transcript && (
+          <section className="rounded-xl border bg-white p-6 shadow-sm">
+
+            <div className="mb-5 flex flex-wrap items-center justify-between gap-4">
+
+              <div className="flex items-center gap-3">
+
+                <div className="rounded-lg bg-blue-100 p-2 text-blue-600">
+                  <FileText size={20} />
+                </div>
+
+                <div>
+
+                  <h2 className="font-semibold">
                     Transcript
                   </h2>
 
-                  <p className="text-sm text-gray-500 mt-1">
-                    Search, filter and navigate the synchronized transcript.
+                  <p className="text-sm text-gray-500">
+                    {transcript.language
+                      ? `Language: ${transcript.language}`
+                      : "Meeting transcript"}
                   </p>
+
                 </div>
+
               </div>
 
-              {expandedSections.transcript ? (
-                <ChevronUp size={20} />
-              ) : (
-                <ChevronDown size={20} />
-              )}
-            </button>
+            </div>
 
-            {expandedSections.transcript && (
-              <div className="px-6 pb-6">
-                {/* SEARCH + FILTER */}
 
-                <div className="flex flex-col md:flex-row gap-3 mb-5">
-                  <div className="relative flex-1">
-                    <Search
-                      size={18}
-                      className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
-                    />
+            {/* SEARCH + SPEAKER FILTER */}
 
-                    <input
-                      type="text"
-                      value={transcriptSearch}
-                      onChange={(event) =>
-                        setTranscriptSearch(
-                          event.target.value
-                        )
-                      }
-                      placeholder="Search transcript..."
-                      className="w-full border border-gray-200 rounded-lg pl-10 pr-4 py-2.5 outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
+            <div className="mb-5 flex flex-col gap-3 md:flex-row">
 
-                  <div className="relative">
-                    <Filter
-                      size={17}
-                      className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
-                    />
+              <div className="relative flex-1">
 
-                    <select
-                      value={speakerFilter}
-                      onChange={(event) =>
-                        setSpeakerFilter(
-                          event.target.value
-                        )
-                      }
-                      className="border border-gray-200 rounded-lg pl-9 pr-8 py-2.5 bg-white outline-none"
-                    >
-                      <option value="all">
-                        All Speakers
+                <Search
+                  size={18}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
+                />
+
+                <input
+                  type="text"
+                  value={
+                    transcriptSearch
+                  }
+                  onChange={(e) =>
+                    setTranscriptSearch(
+                      e.target.value
+                    )
+                  }
+                  placeholder="Search transcript..."
+                  className="w-full rounded-lg border py-2.5 pl-10 pr-4 text-sm outline-none focus:border-blue-500"
+                />
+
+              </div>
+
+
+              <div className="relative">
+
+                <select
+                  value={
+                    speakerFilter
+                  }
+                  onChange={(e) =>
+                    setSpeakerFilter(
+                      e.target.value
+                    )
+                  }
+                  className="w-full appearance-none rounded-lg border bg-white px-4 py-2.5 pr-9 text-sm md:w-52"
+                >
+
+                  <option value="all">
+                    All Speakers
+                  </option>
+
+                  {speakers.map(
+                    (speaker) => (
+                      <option
+                        key={speaker}
+                        value={speaker}
+                      >
+                        {speaker}
                       </option>
+                    )
+                  )}
 
-                      {speakers.map(
-                        (speaker) => (
-                          <option
-                            key={speaker}
-                            value={speaker}
+                </select>
+
+                <ChevronDown
+                  size={16}
+                  className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-gray-400"
+                />
+
+              </div>
+
+            </div>
+
+
+            {/* TRANSCRIPT */}
+
+            {filteredTranscript.length ===
+            0 ? (
+              <div className="rounded-xl bg-gray-50 p-8 text-center">
+
+                <Search
+                  size={32}
+                  className="mx-auto mb-3 text-gray-400"
+                />
+
+                <p className="text-gray-500">
+                  No transcript segments match your search.
+                </p>
+
+              </div>
+            ) : (
+              <div className="max-h-[650px] space-y-2 overflow-y-auto pr-2">
+
+                {filteredTranscript.map(
+                  (segment, index) => {
+
+                    const originalIndex =
+                      transcriptSegments.indexOf(
+                        segment
+                      );
+
+                    const isActive =
+                      audioCurrentTime >=
+                        segment.start &&
+                      audioCurrentTime <
+                        segment.end;
+
+                    return (
+                      <div
+                        key={`${segment.start}-${index}`}
+                        ref={(element) => {
+                          transcriptRefs.current[
+                            originalIndex
+                          ] = element;
+                        }}
+                        className={`rounded-xl border p-4 transition ${
+                          isActive
+                            ? "border-blue-300 bg-blue-50 shadow-sm"
+                            : "bg-white hover:bg-gray-50"
+                        }`}
+                      >
+
+                        <div className="flex gap-4">
+
+                          <button
+                            onClick={() =>
+                              jumpToTimestamp(
+                                segment.start
+                              )
+                            }
+                            className="shrink-0 rounded-lg bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-600 hover:bg-blue-100 hover:text-blue-700"
                           >
-                            {speaker}
-                          </option>
-                        )
-                      )}
-                    </select>
-                  </div>
-                </div>
+                            {formatTimestamp(
+                              segment.start
+                            )}
+                          </button>
 
-                {/* TRANSCRIPT */}
 
-                {transcriptSegments.length ===
-                0 ? (
-                  <div className="bg-gray-50 rounded-xl p-6">
-                    <p className="text-gray-700 whitespace-pre-wrap leading-7">
-                      {transcript.content ||
-                        "No transcript available."}
-                    </p>
-                  </div>
-                ) : filteredTranscript.length ===
-                  0 ? (
-                  <div className="text-center py-10 text-gray-500">
-                    No transcript segments match your search.
-                  </div>
-                ) : (
-                  <div className="max-h-[650px] overflow-y-auto border border-gray-200 rounded-xl">
-                    <div className="divide-y divide-gray-100">
-                      {filteredTranscript.map(
-                        (segment) => {
-                          const originalIndex =
-                            segment.originalIndex;
+                          <div className="min-w-0 flex-1">
 
-                          const isActive =
-                            originalIndex ===
-                            activeSegmentIndex;
+                            <div className="mb-1 flex flex-wrap items-center gap-2">
 
-                          return (
-                            <div
-                              key={`${originalIndex}-${segment.start}`}
-                              ref={(element) => {
-                                transcriptRefs.current[
-                                  originalIndex
-                                ] = element;
-                              }}
-                              className={`p-4 transition ${
-                                isActive
-                                  ? "bg-blue-50 border-l-4 border-blue-600"
-                                  : "hover:bg-gray-50"
-                              }`}
-                            >
-                              <div className="flex items-start gap-4">
-                                <button
-                                  onClick={() =>
-                                    jumpToTimestamp(
-                                      Number(
-                                        segment.start ||
-                                          0
-                                      )
-                                    )
-                                  }
-                                  className={`shrink-0 px-2.5 py-1 rounded-md text-xs font-medium ${
-                                    isActive
-                                      ? "bg-blue-600 text-white"
-                                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                                  }`}
-                                >
-                                  {formatTimestamp(
-                                    Number(
-                                      segment.start ||
-                                        0
-                                    )
-                                  )}
-                                </button>
+                              {segment.speaker && (
+                                <span className="font-semibold text-gray-900">
+                                  {segment.speaker}
+                                </span>
+                              )}
 
-                                <div className="flex-1">
-                                  <div className="flex flex-wrap items-center gap-2 mb-1">
-                                    {segment.speaker && (
-                                      <span
-                                        className={`text-sm font-semibold ${
-                                          isActive
-                                            ? "text-blue-700"
-                                            : "text-gray-800"
-                                        }`}
-                                      >
-                                        {
-                                          segment.speaker
-                                        }
-                                      </span>
-                                    )}
+                              {isActive && (
+                                <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs text-blue-700">
+                                  Playing
+                                </span>
+                              )}
 
-                                    <span className="text-xs text-gray-400">
-                                      {formatTimestamp(
-                                        Number(
-                                          segment.start ||
-                                            0
-                                        )
-                                      )}{" "}
-                                      –{" "}
-                                      {formatTimestamp(
-                                        Number(
-                                          segment.end ||
-                                            0
-                                        )
-                                      )}
-                                    </span>
-                                  </div>
-
-                                  <p
-                                    className={`leading-6 ${
-                                      isActive
-                                        ? "text-blue-900"
-                                        : "text-gray-700"
-                                    }`}
-                                  >
-                                    {segment.text}
-                                  </p>
-                                </div>
-                              </div>
                             </div>
-                          );
-                        }
-                      )}
-                    </div>
-                  </div>
+
+                            <p className="leading-7 text-gray-700">
+                              {segment.text}
+                            </p>
+
+                          </div>
+
+                        </div>
+
+                      </div>
+                    );
+                  }
                 )}
+
               </div>
             )}
+
           </section>
         )}
 
-        {/* ===================================================
-            FOOTER
-        ==================================================== */}
-
-        <div className="text-center text-sm text-gray-400 py-8">
-          Smart AI Meeting Assistant
-        </div>
       </main>
+
     </div>
   );
 }
+
