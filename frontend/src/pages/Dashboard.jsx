@@ -1,50 +1,52 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  Calendar,
-  ChevronLeft,
-  ChevronRight,
-  Clock,
-  LogOut,
+  Search,
   Plus,
   RefreshCw,
-  Search,
-  Video,
+  LogOut,
+  Calendar,
+  FileText,
+  CheckCircle,
+  Clock,
+  Loader2,
+  AlertCircle,
+  ChevronLeft,
+  ChevronRight,
+  ArrowUpDown,
+  X
 } from "lucide-react";
 
 import api from "../services/api";
-import { useAuth } from "../context/AuthContext";
+import MeetingStatusBadge from "../components/MeetingStatusBadge";
+import MeetingProcessingBar from "../components/MeetingProcessingBar";
 
-const PAGE_SIZE = 6;
-
-function Dashboard() {
+export default function Dashboard() {
   const navigate = useNavigate();
-  const { logout } = useAuth();
 
   const [meetings, setMeetings] = useState([]);
-
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [searching, setSearching] = useState(false);
-  const [error, setError] = useState("");
-
+  const [searchResults, setSearchResults] = useState([]);
   const [searchQuery, setSearchQuery] = useState("");
-  const [searchResults, setSearchResults] = useState(null);
 
   const [statusFilter, setStatusFilter] = useState("all");
   const [sortOrder, setSortOrder] = useState("newest");
 
+  const [loading, setLoading] = useState(true);
+  const [searching, setSearching] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState("");
+
   const [currentPage, setCurrentPage] = useState(1);
 
+  const itemsPerPage = 6;
+
   // --------------------------------------------------
-  // Fetch all meetings
+  // FETCH MEETINGS
   // --------------------------------------------------
 
-  const fetchMeetings = async (showRefresh = false) => {
+  const fetchMeetings = async (showLoader = true) => {
     try {
-      if (showRefresh) {
-        setRefreshing(true);
-      } else {
+      if (showLoader) {
         setLoading(true);
       }
 
@@ -52,222 +54,165 @@ function Dashboard() {
 
       const response = await api.get("/meetings/");
 
-      setMeetings(
-        Array.isArray(response.data)
-          ? response.data
-          : []
-      );
+      setMeetings(response.data);
+
     } catch (err) {
-      console.error(
-        "Failed to fetch meetings:",
-        err
-      );
+      console.error("Failed to fetch meetings:", err);
 
       setError(
         err.response?.data?.detail ||
-          "Unable to load your meetings."
+          "Failed to load meetings."
       );
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (showLoader) {
+        setLoading(false);
+      }
     }
   };
 
-  // --------------------------------------------------
-  // Search meeting knowledge
-  // --------------------------------------------------
-
-  const searchMeetingKnowledge = async (query) => {
-    const trimmedQuery = query.trim();
-
-    if (!trimmedQuery) {
-      setSearchResults(null);
-      setSearching(false);
-      return;
-    }
-
-    try {
-      setSearching(true);
-
-      const response = await api.get(
-        "/meetings/search",
-        {
-          params: {
-            q: trimmedQuery,
-          },
-        }
-      );
-
-      setSearchResults(
-        Array.isArray(response.data)
-          ? response.data
-          : []
-      );
-    } catch (err) {
-      console.error(
-        "Meeting search failed:",
-        err
-      );
-
-      setSearchResults([]);
-    } finally {
-      setSearching(false);
-    }
-  };
-
-  // --------------------------------------------------
   // Initial load
-  // --------------------------------------------------
-
   useEffect(() => {
     fetchMeetings();
   }, []);
 
   // --------------------------------------------------
-  // Debounced knowledge search
+  // PROCESSING MEETINGS
+  // --------------------------------------------------
+
+  const processingMeetings = useMemo(() => {
+    return meetings.filter((meeting) =>
+      [
+        "processing",
+        "transcribing",
+        "diarizing",
+        "analyzing"
+      ].includes(meeting.status)
+    );
+  }, [meetings]);
+
+  const hasProcessingMeetings =
+    processingMeetings.length > 0;
+
+  // --------------------------------------------------
+  // LIVE DASHBOARD REFRESH
   // --------------------------------------------------
 
   useEffect(() => {
-    const trimmedQuery = searchQuery.trim();
-
-    if (!trimmedQuery) {
-      setSearchResults(null);
+    if (!hasProcessingMeetings) {
       return;
     }
 
-    const timer = setTimeout(() => {
-      searchMeetingKnowledge(trimmedQuery);
+    const refreshMeetings = async () => {
+      try {
+        const response = await api.get("/meetings/");
+
+        setMeetings(response.data);
+      } catch (err) {
+        console.error(
+          "Failed to refresh meeting status:",
+          err
+        );
+      }
+    };
+
+    const interval = setInterval(
+      refreshMeetings,
+      2000
+    );
+
+    return () => {
+      clearInterval(interval);
+    };
+  }, [hasProcessingMeetings]);
+
+  // --------------------------------------------------
+  // BACKEND KNOWLEDGE SEARCH
+  // --------------------------------------------------
+
+  useEffect(() => {
+    const query = searchQuery.trim();
+
+    if (!query) {
+      setSearchResults([]);
+      setSearching(false);
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      try {
+        setSearching(true);
+
+        const response = await api.get(
+          "/meetings/search",
+          {
+            params: {
+              q: query
+            }
+          }
+        );
+
+        setSearchResults(response.data);
+
+      } catch (err) {
+        console.error(
+          "Meeting search failed:",
+          err
+        );
+
+        setSearchResults([]);
+      } finally {
+        setSearching(false);
+      }
     }, 400);
 
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
   // --------------------------------------------------
-  // Status labels
+  // REFRESH BUTTON
   // --------------------------------------------------
 
-  const getStatusLabel = (status) => {
-    const labels = {
-      completed: "Completed",
-      processing: "Processing",
-      preprocessing: "Preparing",
-      audio_ready: "Audio Ready",
-      transcribing: "Transcribing",
-      diarizing: "Identifying Speakers",
-      analyzing: "Analyzing",
-      diarization_failed: "Diarization Failed",
-      analysis_failed: "Analysis Failed",
-    };
+  const handleRefresh = async () => {
+    try {
+      setRefreshing(true);
 
-    return (
-      labels[status] ||
-      status ||
-      "Unknown"
-    );
-  };
+      await fetchMeetings(false);
 
-  // --------------------------------------------------
-  // Status styling
-  // --------------------------------------------------
+      if (searchQuery.trim()) {
+        const response = await api.get(
+          "/meetings/search",
+          {
+            params: {
+              q: searchQuery.trim()
+            }
+          }
+        );
 
-  const getStatusClass = (status) => {
-    if (status === "completed") {
-      return "bg-green-50 text-green-700 border-green-200";
-    }
-
-    if (
-      [
-        "processing",
-        "preprocessing",
-        "audio_ready",
-        "transcribing",
-        "diarizing",
-        "analyzing",
-      ].includes(status)
-    ) {
-      return "bg-amber-50 text-amber-700 border-amber-200";
-    }
-
-    if (
-      [
-        "analysis_failed",
-        "diarization_failed",
-      ].includes(status)
-    ) {
-      return "bg-red-50 text-red-700 border-red-200";
-    }
-
-    return "bg-slate-50 text-slate-600 border-slate-200";
-  };
-
-  // --------------------------------------------------
-  // Format date
-  // --------------------------------------------------
-
-  const formatDate = (dateString) => {
-    if (!dateString) {
-      return "Unknown date";
-    }
-
-    const date = new Date(dateString);
-
-    if (Number.isNaN(date.getTime())) {
-      return "Unknown date";
-    }
-
-    return date.toLocaleDateString(
-      "en-IN",
-      {
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
+        setSearchResults(response.data);
       }
-    );
+
+    } catch (err) {
+      console.error(
+        "Refresh failed:",
+        err
+      );
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   // --------------------------------------------------
-  // Format duration
+  // FILTER + SEARCH DATA
   // --------------------------------------------------
 
-  const formatDuration = (duration) => {
-    if (
-      duration === null ||
-      duration === undefined ||
-      duration === ""
-    ) {
-      return "Duration unavailable";
-    }
+  const activeMeetings = useMemo(() => {
+    const source = searchQuery.trim()
+      ? searchResults
+      : meetings;
 
-    const totalSeconds = Number(duration);
+    let result = [...source];
 
-    if (Number.isNaN(totalSeconds)) {
-      return "Duration unavailable";
-    }
-
-    const minutes = Math.floor(
-      totalSeconds / 60
-    );
-
-    const seconds = Math.floor(
-      totalSeconds % 60
-    );
-
-    if (minutes === 0) {
-      return `${seconds}s`;
-    }
-
-    return `${minutes}m ${String(
-      seconds
-    ).padStart(2, "0")}s`;
-  };
-
-  // --------------------------------------------------
-  // Local filtering
-  // --------------------------------------------------
-
-  const filteredMeetings = useMemo(() => {
-    let result = [...meetings];
-
+    // Status filter
     if (statusFilter !== "all") {
       result = result.filter(
         (meeting) =>
@@ -275,6 +220,7 @@ function Dashboard() {
       );
     }
 
+    // Sorting
     result.sort((a, b) => {
       const dateA = new Date(
         a.created_at || 0
@@ -292,90 +238,47 @@ function Dashboard() {
     return result;
   }, [
     meetings,
+    searchResults,
+    searchQuery,
     statusFilter,
-    sortOrder,
+    sortOrder
   ]);
 
   // --------------------------------------------------
-  // Active results
-  // --------------------------------------------------
-
-  const displayedMeetings =
-    searchResults !== null
-      ? searchResults.filter((meeting) => {
-          if (statusFilter === "all") {
-            return true;
-          }
-
-          return (
-            meeting.status ===
-            statusFilter
-          );
-        })
-      : filteredMeetings;
-
-  // --------------------------------------------------
-  // Sort search results too
-  // --------------------------------------------------
-
-  const sortedDisplayedMeetings =
-    useMemo(() => {
-      const result = [
-        ...displayedMeetings,
-      ];
-
-      result.sort((a, b) => {
-        const dateA = new Date(
-          a.created_at || 0
-        ).getTime();
-
-        const dateB = new Date(
-          b.created_at || 0
-        ).getTime();
-
-        return sortOrder === "newest"
-          ? dateB - dateA
-          : dateA - dateB;
-      });
-
-      return result;
-    }, [
-      displayedMeetings,
-      sortOrder,
-    ]);
-
-  // --------------------------------------------------
-  // Pagination
+  // PAGINATION
   // --------------------------------------------------
 
   const totalPages = Math.max(
     1,
     Math.ceil(
-      sortedDisplayedMeetings.length /
-        PAGE_SIZE
+      activeMeetings.length /
+        itemsPerPage
     )
   );
 
-  const paginatedMeetings =
-    sortedDisplayedMeetings.slice(
-      (currentPage - 1) * PAGE_SIZE,
-      currentPage * PAGE_SIZE
-    );
+  const safeCurrentPage = Math.min(
+    currentPage,
+    totalPages
+  );
 
-  // --------------------------------------------------
-  // Reset page when filters/search change
-  // --------------------------------------------------
+  const paginatedMeetings =
+    activeMeetings.slice(
+      (safeCurrentPage - 1) *
+        itemsPerPage,
+      safeCurrentPage *
+        itemsPerPage
+    );
 
   useEffect(() => {
     setCurrentPage(1);
   }, [
     searchQuery,
     statusFilter,
-    sortOrder,
+    sortOrder
   ]);
 
   // --------------------------------------------------
-  // Dashboard statistics
+  // STATS
   // --------------------------------------------------
 
   const totalMeetings =
@@ -387,123 +290,137 @@ function Dashboard() {
         meeting.status === "completed"
     ).length;
 
-  const processingMeetings =
-    meetings.filter((meeting) =>
-      [
-        "processing",
-        "preprocessing",
-        "audio_ready",
-        "transcribing",
-        "diarizing",
-        "analyzing",
-      ].includes(meeting.status)
+  const failedMeetings =
+    meetings.filter(
+      (meeting) =>
+        [
+          "processing_failed",
+          "analysis_failed"
+        ].includes(meeting.status)
     ).length;
 
   // --------------------------------------------------
-  // Clear search
+  // FORMAT DATE
   // --------------------------------------------------
 
-  const clearSearch = () => {
-    setSearchQuery("");
-    setSearchResults(null);
-    setCurrentPage(1);
+  const formatDate = (date) => {
+    if (!date) {
+      return "Unknown date";
+    }
+
+    try {
+      return new Date(date).toLocaleDateString(
+        "en-IN",
+        {
+          day: "2-digit",
+          month: "short",
+          year: "numeric"
+        }
+      );
+    } catch {
+      return "Unknown date";
+    }
   };
 
   // --------------------------------------------------
-  // Clear all filters
-  // --------------------------------------------------
-
-  const clearFilters = () => {
-    setSearchQuery("");
-    setSearchResults(null);
-    setStatusFilter("all");
-    setSortOrder("newest");
-    setCurrentPage(1);
-  };
-
-  // --------------------------------------------------
-  // Logout
+  // LOGOUT
   // --------------------------------------------------
 
   const handleLogout = () => {
-    logout();
+    localStorage.removeItem("token");
+
     navigate("/");
   };
 
   // --------------------------------------------------
-  // Render
+  // CLEAR SEARCH
+  // --------------------------------------------------
+
+  const clearSearch = () => {
+    setSearchQuery("");
+    setSearchResults([]);
+    setCurrentPage(1);
+  };
+
+  // --------------------------------------------------
+  // EMPTY STATE MESSAGE
+  // --------------------------------------------------
+
+  const getEmptyMessage = () => {
+    if (searchQuery.trim()) {
+      return "No meetings matched your search.";
+    }
+
+    if (statusFilter !== "all") {
+      return "No meetings found with this status.";
+    }
+
+    return "No meetings uploaded yet.";
+  };
+
+  // --------------------------------------------------
+  // RENDER
   // --------------------------------------------------
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen bg-gray-50">
 
-      {/* ================= HEADER ================= */}
+      {/* -------------------------------------------- */}
+      {/* HEADER */}
+      {/* -------------------------------------------- */}
 
-      <header className="bg-white border-b border-slate-200">
+      <header className="border-b bg-white">
 
-        <div className="max-w-7xl mx-auto px-6 py-4">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
 
-          <div className="flex items-center justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">
+              Smart AI Meeting Assistant
+            </h1>
 
-            <div>
-              <h1 className="text-2xl font-bold text-slate-900">
-                Meeting Assistant
-              </h1>
+            <p className="mt-1 text-sm text-gray-500">
+              Manage, analyze and search your meetings
+            </p>
+          </div>
 
-              <p className="text-sm text-slate-500 mt-1">
-                Your AI-powered meeting workspace
-              </p>
-            </div>
+          <div className="flex items-center gap-3">
 
-            <div className="flex items-center gap-3">
-
-              {/* Refresh */}
-
-              <button
-                onClick={() =>
-                  fetchMeetings(true)
+            <button
+              onClick={handleRefresh}
+              disabled={refreshing}
+              className="flex items-center gap-2 rounded-lg border bg-white px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-50"
+            >
+              <RefreshCw
+                size={17}
+                className={
+                  refreshing
+                    ? "animate-spin"
+                    : ""
                 }
-                disabled={refreshing}
-                className="p-2.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 transition disabled:opacity-50"
-                title="Refresh meetings"
-              >
-                <RefreshCw
-                  className={`w-5 h-5 ${
-                    refreshing
-                      ? "animate-spin"
-                      : ""
-                  }`}
-                />
-              </button>
+              />
 
-              {/* New Meeting */}
+              Refresh
+            </button>
 
-              <button
-                onClick={() =>
-                  navigate(
-                    "/new-meeting"
-                  )
-                }
-                className="flex items-center gap-2 px-4 py-2.5 bg-slate-900 text-white rounded-xl hover:bg-slate-800 transition"
-              >
-                <Plus className="w-4 h-4" />
+            <button
+              onClick={() =>
+                navigate("/new-meeting")
+              }
+              className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700"
+            >
+              <Plus size={18} />
 
-                <span className="hidden sm:inline">
-                  New Meeting
-                </span>
-              </button>
+              New Meeting
+            </button>
 
-              {/* Logout */}
+            <button
+              onClick={handleLogout}
+              className="flex items-center gap-2 rounded-lg border bg-white px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
+            >
+              <LogOut size={17} />
 
-              <button
-                onClick={handleLogout}
-                className="p-2.5 rounded-xl border border-slate-200 hover:bg-slate-50 transition"
-                title="Logout"
-              >
-                <LogOut className="w-5 h-5" />
-              </button>
-
-            </div>
+              Logout
+            </button>
 
           </div>
 
@@ -511,129 +428,254 @@ function Dashboard() {
 
       </header>
 
+      {/* -------------------------------------------- */}
+      {/* MAIN */}
+      {/* -------------------------------------------- */}
 
-      {/* ================= MAIN ================= */}
+      <main className="mx-auto max-w-7xl px-6 py-8">
 
-      <main className="max-w-7xl mx-auto px-6 py-8">
+        {/* ERROR */}
+        {error && (
+          <div className="mb-6 flex items-center gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-red-700">
 
-        {/* ================= STATS ================= */}
+            <AlertCircle size={20} />
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-5 mb-8">
+            <p className="text-sm">
+              {error}
+            </p>
+
+          </div>
+        )}
+
+        {/* ------------------------------------------ */}
+        {/* PROCESSING BANNER */}
+        {/* ------------------------------------------ */}
+
+        {hasProcessingMeetings && (
+          <div className="mb-6 rounded-xl border border-blue-200 bg-blue-50 p-4">
+
+            <div className="flex items-center gap-3">
+
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-100">
+
+                <Loader2
+                  size={20}
+                  className="animate-spin text-blue-600"
+                />
+
+              </div>
+
+              <div>
+
+                <h3 className="font-semibold text-blue-900">
+                  AI processing in progress
+                </h3>
+
+                <p className="text-sm text-blue-700">
+
+                  {processingMeetings.length === 1
+                    ? "Your meeting is being processed automatically."
+                    : `${processingMeetings.length} meetings are being processed automatically.`}
+
+                </p>
+
+              </div>
+
+            </div>
+
+          </div>
+        )}
+
+        {/* ------------------------------------------ */}
+        {/* STATS */}
+        {/* ------------------------------------------ */}
+
+        <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
 
           {/* Total */}
+          <div className="rounded-xl border bg-white p-5 shadow-sm">
 
-          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+            <div className="flex items-center justify-between">
 
-            <p className="text-sm text-slate-500">
-              Total Meetings
-            </p>
+              <div>
 
-            <p className="text-3xl font-bold text-slate-900 mt-2">
-              {totalMeetings}
-            </p>
+                <p className="text-sm text-gray-500">
+                  Total Meetings
+                </p>
+
+                <p className="mt-2 text-3xl font-bold text-gray-900">
+                  {totalMeetings}
+                </p>
+
+              </div>
+
+              <div className="flex h-11 w-11 items-center justify-center rounded-full bg-blue-100">
+
+                <FileText
+                  size={21}
+                  className="text-blue-600"
+                />
+
+              </div>
+
+            </div>
 
           </div>
-
 
           {/* Completed */}
+          <div className="rounded-xl border bg-white p-5 shadow-sm">
 
-          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+            <div className="flex items-center justify-between">
 
-            <p className="text-sm text-slate-500">
-              Completed
-            </p>
+              <div>
 
-            <p className="text-3xl font-bold text-green-600 mt-2">
-              {completedMeetings}
-            </p>
+                <p className="text-sm text-gray-500">
+                  Completed
+                </p>
+
+                <p className="mt-2 text-3xl font-bold text-gray-900">
+                  {completedMeetings}
+                </p>
+
+              </div>
+
+              <div className="flex h-11 w-11 items-center justify-center rounded-full bg-green-100">
+
+                <CheckCircle
+                  size={21}
+                  className="text-green-600"
+                />
+
+              </div>
+
+            </div>
 
           </div>
 
-
           {/* Processing */}
+          <div className="rounded-xl border bg-white p-5 shadow-sm">
 
-          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+            <div className="flex items-center justify-between">
 
-            <p className="text-sm text-slate-500">
-              Processing
-            </p>
+              <div>
 
-            <p className="text-3xl font-bold text-amber-600 mt-2">
-              {processingMeetings}
-            </p>
+                <p className="text-sm text-gray-500">
+                  Currently Processing
+                </p>
+
+                <p className="mt-2 text-3xl font-bold text-gray-900">
+                  {processingMeetings.length}
+                </p>
+
+              </div>
+
+              <div className="flex h-11 w-11 items-center justify-center rounded-full bg-orange-100">
+
+                <Clock
+                  size={21}
+                  className="text-orange-600"
+                />
+
+              </div>
+
+            </div>
+
+          </div>
+
+          {/* Failed */}
+          <div className="rounded-xl border bg-white p-5 shadow-sm">
+
+            <div className="flex items-center justify-between">
+
+              <div>
+
+                <p className="text-sm text-gray-500">
+                  Failed
+                </p>
+
+                <p className="mt-2 text-3xl font-bold text-gray-900">
+                  {failedMeetings}
+                </p>
+
+              </div>
+
+              <div className="flex h-11 w-11 items-center justify-center rounded-full bg-red-100">
+
+                <AlertCircle
+                  size={21}
+                  className="text-red-600"
+                />
+
+              </div>
+
+            </div>
 
           </div>
 
         </div>
 
+        {/* ------------------------------------------ */}
+        {/* SEARCH + FILTERS */}
+        {/* ------------------------------------------ */}
 
-        {/* ================= SEARCH + FILTERS ================= */}
+        <div className="mb-6 rounded-xl border bg-white p-4 shadow-sm">
 
-        <div className="bg-white border border-slate-200 rounded-2xl p-4 mb-6 shadow-sm">
-
-          <div className="flex flex-col lg:flex-row gap-3">
+          <div className="flex flex-col gap-4 lg:flex-row">
 
             {/* Search */}
-
             <div className="relative flex-1">
 
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+              <Search
+                size={19}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
+              />
 
               <input
                 type="text"
                 value={searchQuery}
-                onChange={(e) =>
+                onChange={(event) =>
                   setSearchQuery(
-                    e.target.value
+                    event.target.value
                   )
                 }
                 placeholder="Search meetings, transcripts, decisions, tasks..."
-                className="w-full pl-10 pr-10 py-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-slate-200 focus:border-slate-300"
+                className="w-full rounded-lg border border-gray-200 py-2.5 pl-10 pr-10 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
               />
 
               {searchQuery && (
                 <button
                   onClick={clearSearch}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"
-                  title="Clear search"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700"
                 >
-                  ×
+                  <X size={17} />
                 </button>
+              )}
+
+              {searching && (
+                <Loader2
+                  size={17}
+                  className="absolute right-10 top-1/2 -translate-y-1/2 animate-spin text-blue-500"
+                />
               )}
 
             </div>
 
-
             {/* Status */}
-
             <select
               value={statusFilter}
-              onChange={(e) =>
+              onChange={(event) =>
                 setStatusFilter(
-                  e.target.value
+                  event.target.value
                 )
               }
-              className="px-4 py-3 border border-slate-200 rounded-xl bg-white outline-none focus:ring-2 focus:ring-slate-200"
+              className="rounded-lg border border-gray-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
             >
-
               <option value="all">
-                All statuses
-              </option>
-
-              <option value="completed">
-                Completed
+                All Status
               </option>
 
               <option value="processing">
                 Processing
-              </option>
-
-              <option value="preprocessing">
-                Preparing
-              </option>
-
-              <option value="audio_ready">
-                Audio Ready
               </option>
 
               <option value="transcribing">
@@ -645,423 +687,336 @@ function Dashboard() {
               </option>
 
               <option value="analyzing">
-                Analyzing
+                AI Analyzing
               </option>
 
-              <option value="analysis_failed">
-                Analysis Failed
+              <option value="completed">
+                Completed
               </option>
 
-              <option value="diarization_failed">
-                Diarization Failed
+              <option value="processing_failed">
+                Failed
               </option>
-
             </select>
-
 
             {/* Sort */}
-
-            <select
-              value={sortOrder}
-              onChange={(e) =>
+            <button
+              onClick={() =>
                 setSortOrder(
-                  e.target.value
+                  sortOrder === "newest"
+                    ? "oldest"
+                    : "newest"
                 )
               }
-              className="px-4 py-3 border border-slate-200 rounded-xl bg-white outline-none focus:ring-2 focus:ring-slate-200"
+              className="flex items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
             >
+              <ArrowUpDown size={17} />
 
-              <option value="newest">
-                Newest first
-              </option>
-
-              <option value="oldest">
-                Oldest first
-              </option>
-
-            </select>
+              {sortOrder === "newest"
+                ? "Newest"
+                : "Oldest"}
+            </button>
 
           </div>
 
-
-          {/* Search status */}
-
+          {/* Search indicator */}
           {searchQuery.trim() && (
-            <div className="flex items-center gap-2 mt-3 text-sm text-slate-500">
+            <div className="mt-3 text-xs text-gray-500">
 
-              {searching ? (
-                <>
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-
-                  Searching meeting knowledge...
-                </>
-              ) : (
-                <>
-                  <Search className="w-4 h-4" />
-
-                  Searching across transcripts,
-                  summaries, decisions and
-                  action items
-                </>
-              )}
-
-            </div>
-          )}
-
-
-          {/* Result count */}
-
-          {!searching && (
-            <div className="flex items-center justify-between mt-3 text-sm text-slate-500">
-
-              <span>
-
-                {searchResults !== null ? (
-                  <>
-                    Found{" "}
-                    <span className="font-semibold text-slate-900">
-                      {sortedDisplayedMeetings.length}
-                    </span>{" "}
-                    matching meeting
-                    {sortedDisplayedMeetings.length !==
-                    1
-                      ? "s"
-                      : ""}{" "}
-                    for{" "}
-                    <span className="font-semibold text-slate-900">
-                      "{searchQuery.trim()}"
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    Showing{" "}
-                    <span className="font-semibold text-slate-900">
-                      {filteredMeetings.length}
-                    </span>{" "}
-                    meeting
-                    {filteredMeetings.length !==
-                    1
-                      ? "s"
-                      : ""}
-                  </>
-                )}
-
-              </span>
-
-
-              {(searchQuery ||
-                statusFilter !==
-                  "all" ||
-                sortOrder !==
-                  "newest") && (
-
-                <button
-                  onClick={
-                    clearFilters
-                  }
-                  className="text-slate-900 font-medium hover:underline"
-                >
-                  Clear filters
-                </button>
-
-              )}
+              {searching
+                ? "Searching meeting knowledge..."
+                : `${activeMeetings.length} result${
+                    activeMeetings.length === 1
+                      ? ""
+                      : "s"
+                  } found`}
 
             </div>
           )}
 
         </div>
 
+        {/* ------------------------------------------ */}
+        {/* LOADING */}
+        {/* ------------------------------------------ */}
 
-        {/* ================= LOADING ================= */}
+        {loading ? (
+          <div className="flex min-h-[300px] items-center justify-center">
 
-        {loading && (
-          <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center">
+            <div className="text-center">
 
-            <RefreshCw className="w-7 h-7 animate-spin mx-auto text-slate-500" />
+              <Loader2
+                size={32}
+                className="mx-auto animate-spin text-blue-600"
+              />
 
-            <p className="text-slate-500 mt-4">
-              Loading your meetings...
-            </p>
-
-          </div>
-        )}
-
-
-        {/* ================= ERROR ================= */}
-
-        {!loading && error && (
-          <div className="bg-white border border-red-200 rounded-2xl p-8 text-center">
-
-            <p className="text-red-600 font-medium">
-              {error}
-            </p>
-
-            <button
-              onClick={() =>
-                fetchMeetings()
-              }
-              className="mt-4 px-4 py-2 bg-slate-900 text-white rounded-xl hover:bg-slate-800"
-            >
-              Try Again
-            </button>
-
-          </div>
-        )}
-
-
-        {/* ================= EMPTY STATE ================= */}
-
-        {!loading &&
-          !error &&
-          !searching &&
-          sortedDisplayedMeetings.length ===
-            0 && (
-
-            <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center">
-
-              <div className="w-14 h-14 bg-slate-100 rounded-2xl flex items-center justify-center mx-auto">
-
-                <Search className="w-7 h-7 text-slate-500" />
-
-              </div>
-
-
-              <h2 className="text-lg font-semibold text-slate-900 mt-5">
-
-                {searchResults !==
-                null
-                  ? "No matching meetings"
-                  : meetings.length ===
-                    0
-                  ? "No meetings yet"
-                  : "No meetings found"}
-
-              </h2>
-
-
-              <p className="text-slate-500 mt-2">
-
-                {searchResults !==
-                null
-                  ? `We couldn't find "${searchQuery.trim()}" in your meeting knowledge.`
-                  : meetings.length ===
-                    0
-                  ? "Upload your first meeting to start generating AI insights."
-                  : "Try changing your search or filters."}
-
+              <p className="mt-3 text-sm text-gray-500">
+                Loading meetings...
               </p>
 
+            </div>
 
-              {searchResults !==
-                null && (
+          </div>
+        ) : paginatedMeetings.length === 0 ? (
+
+          /* ---------------------------------------- */
+          /* EMPTY STATE */
+          /* ---------------------------------------- */
+
+          <div className="rounded-xl border bg-white px-6 py-16 text-center shadow-sm">
+
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-gray-100">
+
+              <FileText
+                size={25}
+                className="text-gray-400"
+              />
+
+            </div>
+
+            <h3 className="mt-4 text-lg font-semibold text-gray-900">
+              {getEmptyMessage()}
+            </h3>
+
+            <p className="mt-2 text-sm text-gray-500">
+              {searchQuery.trim()
+                ? "Try a different keyword or clear the search."
+                : "Upload your first meeting to start generating AI insights."}
+            </p>
+
+            {!searchQuery.trim() &&
+              statusFilter === "all" && (
                 <button
-                  onClick={
-                    clearSearch
+                  onClick={() =>
+                    navigate("/new-meeting")
                   }
-                  className="mt-5 px-5 py-2.5 bg-slate-900 text-white rounded-xl hover:bg-slate-800"
+                  className="mt-6 inline-flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-700"
                 >
-                  Clear Search
+                  <Plus size={18} />
+
+                  Upload Meeting
                 </button>
               )}
 
+          </div>
 
-              {meetings.length ===
-                0 &&
-                searchResults ===
-                  null && (
-                  <button
-                    onClick={() =>
-                      navigate(
-                        "/new-meeting"
-                      )
-                    }
-                    className="mt-5 inline-flex items-center gap-2 px-5 py-3 bg-slate-900 text-white rounded-xl hover:bg-slate-800"
-                  >
-                    <Plus className="w-4 h-4" />
+        ) : (
 
-                    Upload Meeting
-                  </button>
-                )}
+          /* ---------------------------------------- */
+          /* MEETING GRID */
+          /* ---------------------------------------- */
 
-            </div>
-          )}
+          <>
 
-
-        {/* ================= MEETING LIST ================= */}
-
-        {!loading &&
-          !error &&
-          !searching &&
-          paginatedMeetings.length >
-            0 && (
-
-            <div className="space-y-4">
+            <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
 
               {paginatedMeetings.map(
-                (meeting) => (
+                (meeting) => {
 
-                  <button
-                    key={meeting.id}
-                    onClick={() =>
-                      navigate(
-                        `/meetings/${meeting.id}`
-                      )
-                    }
-                    className="w-full text-left bg-white border border-slate-200 rounded-2xl p-5 hover:border-slate-300 hover:shadow-md transition"
-                  >
+                  const isProcessing = [
+                    "processing",
+                    "transcribing",
+                    "diarizing",
+                    "analyzing"
+                  ].includes(
+                    meeting.status
+                  );
 
-                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-5">
+                  return (
+                    <div
+                      key={meeting.id}
+                      onClick={() =>
+                        navigate(
+                          `/meetings/${meeting.id}`
+                        )
+                      }
+                      className="group cursor-pointer rounded-xl border bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-md"
+                    >
 
-                      {/* Meeting information */}
-
-                      <div className="flex items-start gap-4">
-
-                        <div className="w-11 h-11 bg-slate-100 rounded-xl flex items-center justify-center shrink-0">
-
-                          <Video className="w-5 h-5 text-slate-600" />
-
-                        </div>
-
+                      {/* Card header */}
+                      <div className="flex items-start justify-between gap-3">
 
                         <div className="min-w-0">
 
-                          <h3 className="font-semibold text-slate-900 text-lg truncate">
+                          <h3 className="truncate text-base font-semibold text-gray-900 group-hover:text-blue-600">
 
                             {meeting.title ||
-                              "Untitled Meeting"}
+                              meeting.file_name ||
+                              `Meeting ${meeting.id}`}
 
                           </h3>
 
-
-                          <p className="text-sm text-slate-500 mt-1 truncate">
+                          <p className="mt-1 truncate text-xs text-gray-400">
 
                             {meeting.file_name ||
-                              "No file name"}
+                              "Meeting recording"}
 
                           </p>
 
-
-                          <div className="flex flex-wrap items-center gap-4 mt-3 text-sm text-slate-500">
-
-                            <span className="flex items-center gap-1.5">
-
-                              <Calendar className="w-4 h-4" />
-
-                              {formatDate(
-                                meeting.created_at
-                              )}
-
-                            </span>
-
-
-                            <span className="flex items-center gap-1.5">
-
-                              <Clock className="w-4 h-4" />
-
-                              {formatDuration(
-                                meeting.duration
-                              )}
-
-                            </span>
-
-                          </div>
-
                         </div>
+
+                        <MeetingStatusBadge
+                          status={
+                            meeting.status
+                          }
+                        />
 
                       </div>
 
+                      {/* Description / Summary */}
+                      {meeting.summary && (
+                        <p className="mt-4 line-clamp-3 text-sm leading-6 text-gray-600">
+                          {meeting.summary}
+                        </p>
+                      )}
 
-                      {/* Status */}
+                      {/* Processing */}
+                      {isProcessing && (
+                        <MeetingProcessingBar
+                          status={
+                            meeting.status
+                          }
+                        />
+                      )}
 
-                      <span
-                        className={`self-start md:self-center px-3 py-1.5 rounded-full border text-sm font-medium whitespace-nowrap ${getStatusClass(
-                          meeting.status
-                        )}`}
-                      >
+                      {/* Metadata */}
+                      <div className="mt-5 flex flex-wrap items-center gap-3 text-xs text-gray-500">
 
-                        {getStatusLabel(
-                          meeting.status
+                        <div className="flex items-center gap-1.5">
+
+                          <Calendar
+                            size={14}
+                          />
+
+                          {formatDate(
+                            meeting.created_at
+                          )}
+
+                        </div>
+
+                        {meeting.duration && (
+                          <div className="flex items-center gap-1.5">
+
+                            <Clock
+                              size={14}
+                            />
+
+                            {Math.round(
+                              meeting.duration
+                            )}s
+
+                          </div>
                         )}
 
-                      </span>
+                        {meeting.speaker_count && (
+                          <div className="flex items-center gap-1.5">
+
+                            <span>
+                              {meeting.speaker_count}
+                            </span>
+
+                            <span>
+                              speakers
+                            </span>
+
+                          </div>
+                        )}
+
+                      </div>
+
+                      {/* Score */}
+                      {meeting.effectiveness_score !==
+                        null &&
+                        meeting.effectiveness_score !==
+                          undefined && (
+                          <div className="mt-4 flex items-center justify-between border-t pt-4">
+
+                            <span className="text-xs text-gray-500">
+                              Effectiveness
+                            </span>
+
+                            <span className="font-semibold text-gray-800">
+                              {
+                                meeting.effectiveness_score
+                              }
+                              /100
+                            </span>
+
+                          </div>
+                        )}
 
                     </div>
-
-                  </button>
-
-                )
-              )}
-
-
-              {/* ================= PAGINATION ================= */}
-
-              {totalPages > 1 && (
-
-                <div className="flex items-center justify-between bg-white border border-slate-200 rounded-2xl px-5 py-4">
-
-                  <p className="text-sm text-slate-500">
-
-                    Page{" "}
-                    <span className="font-medium text-slate-900">
-                      {currentPage}
-                    </span>{" "}
-                    of{" "}
-                    <span className="font-medium text-slate-900">
-                      {totalPages}
-                    </span>
-
-                  </p>
-
-
-                  <div className="flex items-center gap-2">
-
-                    <button
-                      disabled={
-                        currentPage ===
-                        1
-                      }
-                      onClick={() =>
-                        setCurrentPage(
-                          (page) =>
-                            page - 1
-                        )
-                      }
-                      className="p-2 border border-slate-200 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
-                    >
-                      <ChevronLeft className="w-5 h-5" />
-                    </button>
-
-
-                    <button
-                      disabled={
-                        currentPage ===
-                        totalPages
-                      }
-                      onClick={() =>
-                        setCurrentPage(
-                          (page) =>
-                            page + 1
-                        )
-                      }
-                      className="p-2 border border-slate-200 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
-                    >
-                      <ChevronRight className="w-5 h-5" />
-                    </button>
-
-                  </div>
-
-                </div>
-
+                  );
+                }
               )}
 
             </div>
-          )}
+
+            {/* -------------------------------------- */}
+            {/* PAGINATION */}
+            {/* -------------------------------------- */}
+
+            {totalPages > 1 && (
+              <div className="mt-8 flex items-center justify-center gap-3">
+
+                <button
+                  onClick={() =>
+                    setCurrentPage(
+                      (page) =>
+                        Math.max(
+                          1,
+                          page - 1
+                        )
+                    )
+                  }
+                  disabled={
+                    safeCurrentPage === 1
+                  }
+                  className="flex items-center gap-1 rounded-lg border bg-white px-3 py-2 text-sm text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <ChevronLeft size={17} />
+
+                  Previous
+                </button>
+
+                <div className="rounded-lg bg-gray-100 px-4 py-2 text-sm font-medium text-gray-700">
+
+                  Page{" "}
+                  {safeCurrentPage} of{" "}
+                  {totalPages}
+
+                </div>
+
+                <button
+                  onClick={() =>
+                    setCurrentPage(
+                      (page) =>
+                        Math.min(
+                          totalPages,
+                          page + 1
+                        )
+                    )
+                  }
+                  disabled={
+                    safeCurrentPage ===
+                    totalPages
+                  }
+                  className="flex items-center gap-1 rounded-lg border bg-white px-3 py-2 text-sm text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Next
+
+                  <ChevronRight size={17} />
+
+                </button>
+
+              </div>
+            )}
+
+          </>
+        )}
 
       </main>
 
     </div>
   );
 }
-
-export default Dashboard;
-
