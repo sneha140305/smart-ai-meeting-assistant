@@ -30,10 +30,11 @@ from app.services.meeting_ai import (
     analyze_meeting,
     generate_meeting_insights,
 )
+from app.core.queue import processing_queue
+from app.services.meeting_worker import process_meeting_job
 from app.services.analytics import calculate_meeting_analytics
 from app.services.meeting_score import calculate_meeting_score
 from fastapi.responses import FileResponse, StreamingResponse
-from fastapi import BackgroundTasks
 from app.services.processing_pipeline import process_meeting_pipeline
 from app.services.pdf_report import (
     generate_meeting_pdf,
@@ -727,10 +728,6 @@ def analyze_meeting_endpoint(
             0
         )
 
-        # -----------------------------------------
-        # SAVE SPEAKER ANALYTICS
-        # -----------------------------------------
-
         db.query(SpeakerAnalytics).filter(
             SpeakerAnalytics.meeting_id
             == meeting.id
@@ -1220,7 +1217,6 @@ def get_meeting_audio(
 @router.post("/{meeting_id}/process")
 def process_meeting(
     meeting_id: int,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -1246,6 +1242,7 @@ def process_meeting(
         )
 
     if meeting.status in [
+        "processing",
         "transcribing",
         "diarizing",
         "analyzing"
@@ -1258,13 +1255,15 @@ def process_meeting(
     meeting.status = "processing"
     db.commit()
 
-    background_tasks.add_task(
-        process_meeting_pipeline,
-        meeting.id
+    job = processing_queue.enqueue(
+        process_meeting_job,
+        meeting.id,
+        job_timeout=3600
     )
 
     return {
-        "message": "Meeting processing started",
+        "message": "Meeting processing queued",
         "meeting_id": meeting.id,
+        "job_id": job.id,
         "status": "processing"
     }
