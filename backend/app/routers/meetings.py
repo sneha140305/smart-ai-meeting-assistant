@@ -1,15 +1,18 @@
 import json
 import os
 import shutil
+import uuid
 
 from fastapi import (
     APIRouter,
+    BackgroundTasks,
     Depends,
     File,
     Form,
     HTTPException,
     UploadFile,
 )
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user
@@ -25,20 +28,15 @@ from app.database.models import (
 from app.services.audio_processor import extract_audio
 from app.services.transcription import transcribe_audio
 from app.services.diarization import diarize_audio
-from app.services.transcript_merger import merge_transcript_with_speakers
 from app.services.meeting_ai import (
     analyze_meeting,
     generate_meeting_insights,
 )
-from app.core.queue import processing_queue
-from app.services.meeting_worker import process_meeting_job
-from app.services.analytics import calculate_meeting_analytics
-from app.services.meeting_score import calculate_meeting_score
-from fastapi.responses import FileResponse, StreamingResponse
-from app.services.processing_pipeline import process_meeting_pipeline
-from app.services.pdf_report import (
-    generate_meeting_pdf,
+from app.services.processing_pipeline import (
+    process_meeting_pipeline,
 )
+from app.services.pdf_report import generate_meeting_pdf
+
 
 router = APIRouter(
     prefix="/meetings",
@@ -54,21 +52,9 @@ os.makedirs(
 )
 
 
-ALLOWED_EXTENSIONS = {
-    ".mp3",
-    ".wav",
-    ".m4a",
-    ".mp4",
-    ".webm",
-    ".mov",
-}
-
-MAX_FILE_SIZE = 500 * 1024 * 1024
-
-
-# =========================================================
-# CREATE / UPLOAD MEETING
-# =========================================================
+# ============================================================
+# UPLOAD MEETING
+# ============================================================
 
 @router.post("/upload")
 async def upload_meeting(
@@ -77,78 +63,90 @@ async def upload_meeting(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if not file.filename:
-        raise HTTPException(
-            status_code=400,
-            detail="File name is required."
-        )
+    allowed_extensions = {
+        ".mp3",
+        ".wav",
+        ".m4a",
+        ".mp4",
+        ".webm",
+        ".mov",
+    }
+
+    max_file_size = 500 * 1024 * 1024
+
+    original_filename = file.filename or "meeting"
 
     extension = os.path.splitext(
-        file.filename
+        original_filename
     )[1].lower()
 
-    if extension not in ALLOWED_EXTENSIONS:
+    if extension not in allowed_extensions:
         raise HTTPException(
             status_code=400,
             detail=(
-                "Unsupported file format. "
-                "Allowed formats: "
-                + ", ".join(ALLOWED_EXTENSIONS)
-            )
+                "Unsupported file type. "
+                "Allowed: mp3, wav, m4a, mp4, webm, mov"
+            ),
         )
 
-    safe_filename = os.path.basename(
-        file.filename
+    unique_filename = (
+        f"{uuid.uuid4().hex}{extension}"
     )
 
     file_path = os.path.join(
         UPLOAD_DIRECTORY,
-        safe_filename
+        unique_filename
     )
-
-    # Avoid overwriting another file with the same name.
-    base_name, extension = os.path.splitext(
-        safe_filename
-    )
-
-    counter = 1
-
-    while os.path.exists(file_path):
-        safe_filename = (
-            f"{base_name}_{counter}{extension}"
-        )
-
-        file_path = os.path.join(
-            UPLOAD_DIRECTORY,
-            safe_filename
-        )
-
-        counter += 1
 
     try:
-        file_content = await file.read()
 
-        if len(file_content) > MAX_FILE_SIZE:
-            raise HTTPException(
-                status_code=413,
-                detail="File size cannot exceed 500 MB."
-            )
+        file_size = 0
 
         with open(file_path, "wb") as buffer:
-            buffer.write(file_content)
+
+            while True:
+
+                chunk = await file.read(1024 * 1024)
+
+                if not chunk:
+                    break
+
+                file_size += len(chunk)
+
+                if file_size > max_file_size:
+
+                    buffer.close()
+
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+
+                    raise HTTPException(
+                        status_code=413,
+                        detail="File size exceeds 500 MB limit."
+                    )
+
+                buffer.write(chunk)
 
     except HTTPException:
         raise
 
     except Exception as error:
+
+        if os.path.exists(file_path):
+            os.remove(file_path)
+
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to save file: {str(error)}"
+            detail=f"File upload failed: {str(error)}"
         )
+
+    # --------------------------------------------------------
+    # CREATE MEETING RECORD
+    # --------------------------------------------------------
 
     meeting = Meeting(
         title=title,
-        file_name=safe_filename,
+        file_name=original_filename,
         file_path=file_path,
         status="processing",
         owner_id=current_user.id,
@@ -158,7 +156,12 @@ async def upload_meeting(
     db.commit()
     db.refresh(meeting)
 
+    # --------------------------------------------------------
+    # EXTRACT AUDIO
+    # --------------------------------------------------------
+
     try:
+
         audio_path = extract_audio(
             file_path,
             meeting.id
@@ -171,26 +174,90 @@ async def upload_meeting(
         db.refresh(meeting)
 
     except Exception as error:
-        meeting.status = "audio_processing_failed"
+
+        meeting.status = "processing_failed"
         db.commit()
 
         raise HTTPException(
             status_code=500,
-            detail=str(error)
+            detail=f"Audio processing failed: {str(error)}"
         )
 
     return {
-        "message": "Meeting uploaded successfully.",
-        "meeting_id": meeting.id,
+        "id": meeting.id,
         "title": meeting.title,
         "file_name": meeting.file_name,
         "status": meeting.status,
+        "message": "Meeting uploaded successfully."
     }
 
 
-# =========================================================
-# GET ALL MEETINGS
-# =========================================================
+# ============================================================
+# START AUTOMATIC PROCESSING
+# ============================================================
+
+@router.post("/{meeting_id}/process")
+def process_meeting(
+    meeting_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    meeting = (
+        db.query(Meeting)
+        .filter(
+            Meeting.id == meeting_id,
+            Meeting.owner_id == current_user.id,
+        )
+        .first()
+    )
+
+    if not meeting:
+        raise HTTPException(
+            status_code=404,
+            detail="Meeting not found"
+        )
+
+    if not meeting.audio_path:
+        raise HTTPException(
+            status_code=400,
+            detail="Processed audio is not available."
+        )
+
+    if meeting.status in {
+        "processing",
+        "transcribing",
+        "diarizing",
+        "analyzing",
+    }:
+        raise HTTPException(
+            status_code=400,
+            detail="Meeting is already being processed."
+        )
+
+    meeting.status = "processing"
+
+    db.commit()
+
+    # --------------------------------------------------------
+    # RUN AI PIPELINE IN BACKGROUND
+    # --------------------------------------------------------
+
+    background_tasks.add_task(
+        process_meeting_pipeline,
+        meeting.id
+    )
+
+    return {
+        "message": "Meeting processing started.",
+        "meeting_id": meeting.id,
+        "status": "processing",
+    }
+
+
+# ============================================================
+# GET ALL USER MEETINGS
+# ============================================================
 
 @router.get("/")
 def get_meetings(
@@ -211,9 +278,9 @@ def get_meetings(
     return meetings
 
 
-# =========================================================
-# PHASE 25 — SMART MEETING KNOWLEDGE SEARCH
-# =========================================================
+# ============================================================
+# SEARCH MEETINGS
+# ============================================================
 
 @router.get("/search")
 def search_meetings(
@@ -249,7 +316,7 @@ def search_meetings(
                 | Transcript.content.ilike(search_term)
                 | ActionItem.task.ilike(search_term)
                 | ActionItem.assigned_to.ilike(search_term)
-            )
+            ),
         )
         .distinct()
         .order_by(
@@ -260,74 +327,10 @@ def search_meetings(
 
     return meetings
 
-@router.get("/{meeting_id}/report")
-def download_meeting_report(
-    meeting_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    meeting = (
-        db.query(Meeting)
-        .filter(
-            Meeting.id == meeting_id,
-            Meeting.owner_id == current_user.id
-        )
-        .first()
-    )
 
-    if not meeting:
-        raise HTTPException(
-            status_code=404,
-            detail="Meeting not found"
-        )
-
-    if meeting.status != "completed":
-        raise HTTPException(
-            status_code=400,
-            detail="Meeting analysis is not completed yet."
-        )
-
-    transcript = (
-        db.query(Transcript)
-        .filter(
-            Transcript.meeting_id == meeting_id
-        )
-        .first()
-    )
-
-    action_items = (
-        db.query(ActionItem)
-        .filter(
-            ActionItem.meeting_id == meeting_id
-        )
-        .all()
-    )
-
-    speaker_analytics = (
-        db.query(SpeakerAnalytics)
-        .filter(
-            SpeakerAnalytics.meeting_id == meeting_id
-        )
-        .all()
-    )
-
-    file_path = generate_meeting_pdf(
-        meeting=meeting,
-        transcript=transcript,
-        action_items=action_items,
-        speaker_analytics=speaker_analytics,
-    )
-
-    return FileResponse(
-        path=file_path,
-        media_type="application/pdf",
-        filename=(
-            f"meeting_report_{meeting.id}.pdf"
-        ),
-    )
-# =========================================================
+# ============================================================
 # GET SINGLE MEETING
-# =========================================================
+# ============================================================
 
 @router.get("/{meeting_id}")
 def get_meeting(
@@ -339,7 +342,7 @@ def get_meeting(
         db.query(Meeting)
         .filter(
             Meeting.id == meeting_id,
-            Meeting.owner_id == current_user.id
+            Meeting.owner_id == current_user.id,
         )
         .first()
     )
@@ -347,15 +350,15 @@ def get_meeting(
     if not meeting:
         raise HTTPException(
             status_code=404,
-            detail="Meeting not found."
+            detail="Meeting not found"
         )
 
     return meeting
 
 
-# =========================================================
-# TRANSCRIBE MEETING
-# =========================================================
+# ============================================================
+# TRANSCRIBE
+# ============================================================
 
 @router.post("/{meeting_id}/transcribe")
 def transcribe_meeting(
@@ -367,7 +370,7 @@ def transcribe_meeting(
         db.query(Meeting)
         .filter(
             Meeting.id == meeting_id,
-            Meeting.owner_id == current_user.id
+            Meeting.owner_id == current_user.id,
         )
         .first()
     )
@@ -375,69 +378,53 @@ def transcribe_meeting(
     if not meeting:
         raise HTTPException(
             status_code=404,
-            detail="Meeting not found."
+            detail="Meeting not found"
         )
 
     if not meeting.audio_path:
         raise HTTPException(
             status_code=400,
-            detail="Processed audio is not available."
+            detail="Audio file not available."
         )
 
-    meeting.status = "transcribing"
-    db.commit()
-
     try:
+
+        meeting.status = "transcribing"
+        db.commit()
+
         result = transcribe_audio(
             meeting.audio_path
         )
 
-        transcript_segments = result[
-            "segments"
-        ]
-
-        transcript_text = "\n".join(
-            segment["text"]
-            for segment in transcript_segments
-        )
-
-        existing_transcript = (
+        transcript = (
             db.query(Transcript)
             .filter(
-                Transcript.meeting_id
-                == meeting.id
+                Transcript.meeting_id ==
+                meeting.id
             )
             .first()
         )
 
-        if existing_transcript:
-
-            existing_transcript.content = (
-                transcript_text
-            )
-
-            existing_transcript.language = (
-                result["language"]
-            )
-
-            existing_transcript.segments = (
-                json.dumps(
-                    transcript_segments
-                )
-            )
-
-        else:
+        if not transcript:
 
             transcript = Transcript(
-                content=transcript_text,
-                language=result["language"],
-                segments=json.dumps(
-                    transcript_segments
-                ),
-                meeting_id=meeting.id,
+                meeting_id=meeting.id
             )
 
             db.add(transcript)
+
+        transcript.language = result[
+            "language"
+        ]
+
+        transcript.content = "\n".join(
+            segment["text"]
+            for segment in result["segments"]
+        )
+
+        transcript.segments = json.dumps(
+            result["segments"]
+        )
 
         meeting.status = "transcribed"
 
@@ -446,10 +433,7 @@ def transcribe_meeting(
         return {
             "message": "Transcription completed.",
             "language": result["language"],
-            "language_probability": result[
-                "language_probability"
-            ],
-            "segments": transcript_segments,
+            "segments": result["segments"],
         }
 
     except Exception as error:
@@ -463,9 +447,9 @@ def transcribe_meeting(
         )
 
 
-# =========================================================
-# DIARIZE MEETING
-# =========================================================
+# ============================================================
+# DIARIZE
+# ============================================================
 
 @router.post("/{meeting_id}/diarize")
 def diarize_meeting(
@@ -477,7 +461,7 @@ def diarize_meeting(
         db.query(Meeting)
         .filter(
             Meeting.id == meeting_id,
-            Meeting.owner_id == current_user.id
+            Meeting.owner_id == current_user.id,
         )
         .first()
     )
@@ -485,13 +469,14 @@ def diarize_meeting(
     if not meeting:
         raise HTTPException(
             status_code=404,
-            detail="Meeting not found."
+            detail="Meeting not found"
         )
 
     transcript = (
         db.query(Transcript)
         .filter(
-            Transcript.meeting_id == meeting.id
+            Transcript.meeting_id ==
+            meeting.id
         )
         .first()
     )
@@ -499,19 +484,20 @@ def diarize_meeting(
     if not transcript:
         raise HTTPException(
             status_code=400,
-            detail="Transcript not found. Transcribe first."
+            detail="Transcript not found."
         )
 
     if not meeting.audio_path:
         raise HTTPException(
             status_code=400,
-            detail="Processed audio is not available."
+            detail="Audio file not available."
         )
 
-    meeting.status = "diarizing"
-    db.commit()
-
     try:
+
+        meeting.status = "diarizing"
+        db.commit()
+
         speaker_segments = diarize_audio(
             meeting.audio_path
         )
@@ -523,22 +509,55 @@ def diarize_meeting(
             )
 
         else:
+
             transcript_segments = []
 
-        merged_segments = (
-            merge_transcript_with_speakers(
-                transcript_segments,
-                speaker_segments
-            )
-        )
+        merged_segments = []
+
+        for segment in transcript_segments:
+
+            best_speaker = "Unknown"
+            best_overlap = 0
+
+            for speaker_segment in speaker_segments:
+
+                overlap_start = max(
+                    segment["start"],
+                    speaker_segment["start"]
+                )
+
+                overlap_end = min(
+                    segment["end"],
+                    speaker_segment["end"]
+                )
+
+                overlap = max(
+                    0,
+                    overlap_end - overlap_start
+                )
+
+                if overlap > best_overlap:
+
+                    best_overlap = overlap
+
+                    best_speaker = (
+                        speaker_segment["speaker"]
+                    )
+
+            merged_segments.append({
+                "start": segment["start"],
+                "end": segment["end"],
+                "speaker": best_speaker,
+                "text": segment["text"],
+            })
 
         transcript.segments = json.dumps(
             merged_segments
         )
 
         transcript.content = "\n".join(
-            f"{segment.get('speaker', 'UNKNOWN')}: "
-            f"{segment.get('text', '')}"
+            f"[{segment['speaker']}] "
+            f"{segment['text']}"
             for segment in merged_segments
         )
 
@@ -562,9 +581,69 @@ def diarize_meeting(
         )
 
 
-# =========================================================
+# ============================================================
+# GET TRANSCRIPT
+# ============================================================
+
+@router.get("/{meeting_id}/transcript")
+def get_transcript(
+    meeting_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    meeting = (
+        db.query(Meeting)
+        .filter(
+            Meeting.id == meeting_id,
+            Meeting.owner_id == current_user.id,
+        )
+        .first()
+    )
+
+    if not meeting:
+        raise HTTPException(
+            status_code=404,
+            detail="Meeting not found"
+        )
+
+    transcript = (
+        db.query(Transcript)
+        .filter(
+            Transcript.meeting_id ==
+            meeting.id
+        )
+        .first()
+    )
+
+    if not transcript:
+        raise HTTPException(
+            status_code=404,
+            detail="Transcript not found"
+        )
+
+    segments = []
+
+    if transcript.segments:
+
+        try:
+            segments = json.loads(
+                transcript.segments
+            )
+
+        except json.JSONDecodeError:
+            segments = []
+
+    return {
+        "id": transcript.id,
+        "content": transcript.content,
+        "language": transcript.language,
+        "segments": segments,
+    }
+
+
+# ============================================================
 # ANALYZE MEETING
-# =========================================================
+# ============================================================
 
 @router.post("/{meeting_id}/analyze")
 def analyze_meeting_endpoint(
@@ -576,7 +655,7 @@ def analyze_meeting_endpoint(
         db.query(Meeting)
         .filter(
             Meeting.id == meeting_id,
-            Meeting.owner_id == current_user.id
+            Meeting.owner_id == current_user.id,
         )
         .first()
     )
@@ -584,13 +663,14 @@ def analyze_meeting_endpoint(
     if not meeting:
         raise HTTPException(
             status_code=404,
-            detail="Meeting not found."
+            detail="Meeting not found"
         )
 
     transcript = (
         db.query(Transcript)
         .filter(
-            Transcript.meeting_id == meeting.id
+            Transcript.meeting_id ==
+            meeting.id
         )
         .first()
     )
@@ -601,14 +681,10 @@ def analyze_meeting_endpoint(
             detail="Transcript not found."
         )
 
-    meeting.status = "analyzing"
-    db.commit()
-
     try:
 
-        # -----------------------------------------
-        # AI ANALYSIS
-        # -----------------------------------------
+        meeting.status = "analyzing"
+        db.commit()
 
         result = analyze_meeting(
             transcript.content
@@ -633,281 +709,57 @@ def analyze_meeting_endpoint(
             )
         )
 
-        # -----------------------------------------
-        # REMOVE OLD ACTION ITEMS
-        # -----------------------------------------
-
         db.query(ActionItem).filter(
-            ActionItem.meeting_id
-            == meeting.id
-        ).delete(
-            synchronize_session=False
-        )
+            ActionItem.meeting_id ==
+            meeting.id
+        ).delete()
 
-        db.commit()
-
-        # -----------------------------------------
-        # CREATE ACTION ITEMS
-        # -----------------------------------------
-
-        for item in result.get(
+        action_items = result.get(
             "action_items",
             []
-        ):
-
-            action_item = ActionItem(
-                task=item.get(
-                    "task",
-                    ""
-                ),
-
-                assigned_to=item.get(
-                    "assigned_to",
-                    "Unknown"
-                ),
-
-                deadline=item.get(
-                    "deadline",
-                    "Not mentioned"
-                ),
-
-                priority=item.get(
-                    "priority",
-                    "medium"
-                ),
-
-                status="pending",
-
-                meeting_id=meeting.id,
-            )
-
-            db.add(action_item)
-
-        db.commit()
-
-        # -----------------------------------------
-        # CALCULATE ANALYTICS
-        # -----------------------------------------
-
-        if transcript.segments:
-
-            transcript_segments = json.loads(
-                transcript.segments
-            )
-
-        else:
-
-            transcript_segments = []
-
-        analytics = calculate_meeting_analytics(
-            transcript_segments
         )
 
-        meeting.total_words = analytics.get(
-            "total_words",
-            0
-        )
+        for item in action_items:
 
-        meeting.speaker_count = analytics.get(
-            "speaker_count",
-            0
-        )
-
-        meeting.positive_sentiment = analytics.get(
-            "positive_sentiment",
-            0
-        )
-
-        meeting.negative_sentiment = analytics.get(
-            "negative_sentiment",
-            0
-        )
-
-        meeting.neutral_sentiment = analytics.get(
-            "neutral_sentiment",
-            0
-        )
-
-        db.query(SpeakerAnalytics).filter(
-            SpeakerAnalytics.meeting_id
-            == meeting.id
-        ).delete(
-            synchronize_session=False
-        )
-
-        db.commit()
-
-        speaker_analytics_data = analytics.get(
-            "speaker_analytics",
-            []
-        )
-
-        for speaker in speaker_analytics_data:
-
-            speaker_record = SpeakerAnalytics(
-                speaker=speaker.get(
-                    "speaker",
-                    "UNKNOWN"
-                ),
-
-                speaking_time=speaker.get(
-                    "speaking_time",
-                    0
-                ),
-
-                word_count=speaker.get(
-                    "word_count",
-                    0
-                ),
-
-                meeting_id=meeting.id,
-            )
-
-            db.add(speaker_record)
-
-        db.commit()
-
-        # -----------------------------------------
-        # REFRESH RELATIONSHIPS
-        # -----------------------------------------
-
-        db.refresh(meeting)
-
-        # -----------------------------------------
-        # MEETING EFFECTIVENESS SCORE
-        # -----------------------------------------
-
-        meeting_score = calculate_meeting_score(
-            total_words=meeting.total_words or 0,
-
-            speaker_count=meeting.speaker_count or 0,
-
-            positive_sentiment=(
-                meeting.positive_sentiment or 0
-            ),
-
-            negative_sentiment=(
-                meeting.negative_sentiment or 0
-            ),
-
-            neutral_sentiment=(
-                meeting.neutral_sentiment or 0
-            ),
-
-            action_items=meeting.action_items,
-
-            duration=meeting.duration,
-        )
-
-        meeting.effectiveness_score = (
-            meeting_score["score"]
-        )
-
-        meeting.effectiveness_rating = (
-            meeting_score["rating"]
-        )
-
-        db.commit()
-
-        # -----------------------------------------
-        # AI INSIGHTS
-        # -----------------------------------------
-
-        speaker_data = [
-            {
-                "speaker": item.speaker,
-                "speaking_time": item.speaking_time,
-                "word_count": item.word_count,
-            }
-            for item in meeting.speaker_analytics
-        ]
-
-        action_item_data = [
-            {
-                "task": item.task,
-                "assigned_to": item.assigned_to,
-                "deadline": item.deadline,
-                "priority": item.priority,
-                "status": item.status,
-            }
-            for item in meeting.action_items
-        ]
-
-        insights = generate_meeting_insights(
-            transcript=transcript.content,
-
-            score=meeting.effectiveness_score,
-
-            rating=meeting.effectiveness_rating,
-
-            speaker_analytics=speaker_data,
-
-            action_items=action_item_data,
-
-            positive_sentiment=(
-                meeting.positive_sentiment or 0
-            ),
-
-            negative_sentiment=(
-                meeting.negative_sentiment or 0
-            ),
-
-            neutral_sentiment=(
-                meeting.neutral_sentiment or 0
-            ),
-        )
-
-        meeting.meeting_insights = json.dumps(
-            insights.get(
-                "insights",
-                []
-            )
-        )
-
-        meeting.meeting_recommendations = (
-            json.dumps(
-                insights.get(
-                    "recommendations",
-                    []
+            db.add(
+                ActionItem(
+                    meeting_id=meeting.id,
+                    task=item.get(
+                        "task",
+                        ""
+                    ),
+                    assigned_to=item.get(
+                        "assigned_to",
+                        "Unknown"
+                    ),
+                    deadline=item.get(
+                        "deadline",
+                        "Not mentioned"
+                    ),
+                    priority=item.get(
+                        "priority",
+                        "medium"
+                    ),
+                    status="pending",
                 )
             )
-        )
 
         meeting.status = "completed"
 
         db.commit()
-        db.refresh(meeting)
 
         return {
             "message": "Meeting analysis completed.",
-
             "summary": meeting.summary,
-
             "key_points": result.get(
                 "key_points",
                 []
             ),
-
             "decisions": result.get(
                 "decisions",
                 []
             ),
-
-            "action_items": action_item_data,
-
-            "analytics": analytics,
-
-            "meeting_score": meeting_score,
-
-            "insights": insights.get(
-                "insights",
-                []
-            ),
-
-            "recommendations": insights.get(
-                "recommendations",
-                []
-            ),
+            "action_items": action_items,
         }
 
     except Exception as error:
@@ -917,72 +769,13 @@ def analyze_meeting_endpoint(
 
         raise HTTPException(
             status_code=500,
-            detail=f"Meeting analysis failed: {str(error)}"
+            detail=f"Analysis failed: {str(error)}"
         )
 
 
-# =========================================================
-# GET TRANSCRIPT
-# =========================================================
-
-@router.get("/{meeting_id}/transcript")
-def get_transcript(
-    meeting_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    meeting = (
-        db.query(Meeting)
-        .filter(
-            Meeting.id == meeting_id,
-            Meeting.owner_id == current_user.id
-        )
-        .first()
-    )
-
-    if not meeting:
-        raise HTTPException(
-            status_code=404,
-            detail="Meeting not found."
-        )
-
-    transcript = (
-        db.query(Transcript)
-        .filter(
-            Transcript.meeting_id == meeting.id
-        )
-        .first()
-    )
-
-    if not transcript:
-        raise HTTPException(
-            status_code=404,
-            detail="Transcript not found."
-        )
-
-    segments = []
-
-    if transcript.segments:
-
-        try:
-            segments = json.loads(
-                transcript.segments
-            )
-
-        except json.JSONDecodeError:
-            segments = []
-
-    return {
-        "id": transcript.id,
-        "content": transcript.content,
-        "language": transcript.language,
-        "segments": segments,
-    }
-
-
-# =========================================================
-# GET ACTION ITEMS
-# =========================================================
+# ============================================================
+# ACTION ITEMS
+# ============================================================
 
 @router.get("/{meeting_id}/action-items")
 def get_action_items(
@@ -994,7 +787,7 @@ def get_action_items(
         db.query(Meeting)
         .filter(
             Meeting.id == meeting_id,
-            Meeting.owner_id == current_user.id
+            Meeting.owner_id == current_user.id,
         )
         .first()
     )
@@ -1002,13 +795,14 @@ def get_action_items(
     if not meeting:
         raise HTTPException(
             status_code=404,
-            detail="Meeting not found."
+            detail="Meeting not found"
         )
 
-    action_items = (
+    return (
         db.query(ActionItem)
         .filter(
-            ActionItem.meeting_id == meeting_id
+            ActionItem.meeting_id ==
+            meeting.id
         )
         .order_by(
             ActionItem.id.asc()
@@ -1016,27 +810,12 @@ def get_action_items(
         .all()
     )
 
-    return [
-        {
-            "id": item.id,
-            "task": item.task,
-            "assigned_to": item.assigned_to,
-            "deadline": item.deadline,
-            "priority": item.priority,
-            "status": item.status,
-            "meeting_id": item.meeting_id,
-        }
-        for item in action_items
-    ]
 
-
-# =========================================================
+# ============================================================
 # UPDATE ACTION ITEM
-# =========================================================
+# ============================================================
 
-@router.patch(
-    "/{meeting_id}/action-items/{action_item_id}"
-)
+@router.patch("/{meeting_id}/action-items/{action_item_id}")
 def update_action_item(
     meeting_id: int,
     action_item_id: int,
@@ -1049,7 +828,7 @@ def update_action_item(
         db.query(Meeting)
         .filter(
             Meeting.id == meeting_id,
-            Meeting.owner_id == current_user.id
+            Meeting.owner_id == current_user.id,
         )
         .first()
     )
@@ -1057,14 +836,14 @@ def update_action_item(
     if not meeting:
         raise HTTPException(
             status_code=404,
-            detail="Meeting not found."
+            detail="Meeting not found"
         )
 
     action_item = (
         db.query(ActionItem)
         .filter(
             ActionItem.id == action_item_id,
-            ActionItem.meeting_id == meeting_id
+            ActionItem.meeting_id == meeting.id,
         )
         .first()
     )
@@ -1072,43 +851,37 @@ def update_action_item(
     if not action_item:
         raise HTTPException(
             status_code=404,
-            detail="Action item not found."
+            detail="Action item not found"
         )
 
-    if status is not None:
+    allowed_statuses = {
+        "pending",
+        "in_progress",
+        "completed",
+    }
 
-        allowed_statuses = [
-            "pending",
-            "in_progress",
-            "completed",
-        ]
+    allowed_priorities = {
+        "low",
+        "medium",
+        "high",
+    }
+
+    if status is not None:
 
         if status not in allowed_statuses:
             raise HTTPException(
                 status_code=400,
-                detail=(
-                    "Status must be one of: "
-                    "pending, in_progress, completed"
-                )
+                detail="Invalid status."
             )
 
         action_item.status = status
 
     if priority is not None:
 
-        allowed_priorities = [
-            "low",
-            "medium",
-            "high",
-        ]
-
         if priority not in allowed_priorities:
             raise HTTPException(
                 status_code=400,
-                detail=(
-                    "Priority must be one of: "
-                    "low, medium, high"
-                )
+                detail="Invalid priority."
             )
 
         action_item.priority = priority
@@ -1116,20 +889,12 @@ def update_action_item(
     db.commit()
     db.refresh(action_item)
 
-    return {
-        "id": action_item.id,
-        "task": action_item.task,
-        "assigned_to": action_item.assigned_to,
-        "deadline": action_item.deadline,
-        "priority": action_item.priority,
-        "status": action_item.status,
-        "meeting_id": action_item.meeting_id,
-    }
+    return action_item
 
 
-# =========================================================
-# GET SPEAKER ANALYTICS
-# =========================================================
+# ============================================================
+# SPEAKER ANALYTICS
+# ============================================================
 
 @router.get("/{meeting_id}/speaker-analytics")
 def get_speaker_analytics(
@@ -1141,7 +906,7 @@ def get_speaker_analytics(
         db.query(Meeting)
         .filter(
             Meeting.id == meeting_id,
-            Meeting.owner_id == current_user.id
+            Meeting.owner_id == current_user.id,
         )
         .first()
     )
@@ -1149,43 +914,37 @@ def get_speaker_analytics(
     if not meeting:
         raise HTTPException(
             status_code=404,
-            detail="Meeting not found."
+            detail="Meeting not found"
         )
 
-    analytics = (
+    return (
         db.query(SpeakerAnalytics)
         .filter(
-            SpeakerAnalytics.meeting_id
-            == meeting_id
+            SpeakerAnalytics.meeting_id ==
+            meeting.id
         )
         .order_by(
-            SpeakerAnalytics.word_count.desc()
+            SpeakerAnalytics.speaking_time.desc()
         )
         .all()
     )
 
-    return [
-        {
-            "id": item.id,
-            "speaker": item.speaker,
-            "speaking_time": item.speaking_time,
-            "word_count": item.word_count,
-            "meeting_id": item.meeting_id,
-        }
-        for item in analytics
-    ]
+
+# ============================================================
+# AUDIO
+# ============================================================
 
 @router.get("/{meeting_id}/audio")
 def get_meeting_audio(
     meeting_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     meeting = (
         db.query(Meeting)
         .filter(
             Meeting.id == meeting_id,
-            Meeting.owner_id == current_user.id
+            Meeting.owner_id == current_user.id,
         )
         .first()
     )
@@ -1199,32 +958,41 @@ def get_meeting_audio(
     if not meeting.audio_path:
         raise HTTPException(
             status_code=404,
-            detail="Processed audio not found"
+            detail="Processed audio not found."
         )
 
-    if not os.path.exists(meeting.audio_path):
+    if not os.path.exists(
+        meeting.audio_path
+    ):
         raise HTTPException(
             status_code=404,
-            detail="Audio file does not exist"
+            detail="Audio file does not exist."
         )
 
     return FileResponse(
         meeting.audio_path,
         media_type="audio/wav",
-        filename=f"meeting_{meeting.id}.wav"
+        filename=(
+            f"meeting_{meeting.id}.wav"
+        ),
     )
 
-@router.post("/{meeting_id}/process")
-def process_meeting(
+
+# ============================================================
+# PDF REPORT
+# ============================================================
+
+@router.get("/{meeting_id}/report")
+def download_meeting_report(
     meeting_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     meeting = (
         db.query(Meeting)
         .filter(
             Meeting.id == meeting_id,
-            Meeting.owner_id == current_user.id
+            Meeting.owner_id == current_user.id,
         )
         .first()
     )
@@ -1235,35 +1003,62 @@ def process_meeting(
             detail="Meeting not found"
         )
 
-    if not meeting.audio_path:
+    if meeting.status != "completed":
         raise HTTPException(
             status_code=400,
-            detail="Processed audio is not available"
+            detail=(
+                "Meeting processing must be completed "
+                "before generating the report."
+            )
         )
 
-    if meeting.status in [
-        "processing",
-        "transcribing",
-        "diarizing",
-        "analyzing"
-    ]:
-        raise HTTPException(
-            status_code=400,
-            detail="Meeting is already being processed"
+    transcript = (
+        db.query(Transcript)
+        .filter(
+            Transcript.meeting_id ==
+            meeting.id
         )
-
-    meeting.status = "processing"
-    db.commit()
-
-    job = processing_queue.enqueue(
-        process_meeting_job,
-        meeting.id,
-        job_timeout=3600
+        .first()
     )
 
-    return {
-        "message": "Meeting processing queued",
-        "meeting_id": meeting.id,
-        "job_id": job.id,
-        "status": "processing"
-    }
+    action_items = (
+        db.query(ActionItem)
+        .filter(
+            ActionItem.meeting_id ==
+            meeting.id
+        )
+        .all()
+    )
+
+    speaker_analytics = (
+        db.query(SpeakerAnalytics)
+        .filter(
+            SpeakerAnalytics.meeting_id ==
+            meeting.id
+        )
+        .all()
+    )
+
+    try:
+
+        report_path = generate_meeting_pdf(
+            meeting=meeting,
+            transcript=transcript,
+            action_items=action_items,
+            speaker_analytics=speaker_analytics,
+        )
+
+        return FileResponse(
+            report_path,
+            media_type="application/pdf",
+            filename=(
+                f"meeting_report_{meeting.id}.pdf"
+            ),
+        )
+
+    except Exception as error:
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"PDF generation failed: {str(error)}"
+        )

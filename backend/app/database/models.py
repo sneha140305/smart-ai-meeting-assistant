@@ -181,6 +181,26 @@ class Meeting(Base):
         nullable=True
     )
 
+    processing_stage = Column(
+        String,
+        nullable=True
+    )
+
+    processing_message = Column(
+        String,
+        nullable=True
+    )
+
+    processing_progress = Column(
+        Integer,
+        default=0,
+        nullable=False
+    )
+
+    processing_error = Column(
+        Text,
+        nullable=True
+)
 
 class Transcript(Base):
     __tablename__ = "transcripts"

@@ -873,9 +873,7 @@ export default function Dashboard() {
                       {/* Processing */}
                       {isProcessing && (
                         <MeetingProcessingBar
-                          status={
-                            meeting.status
-                          }
+                          meeting={meeting}
                         />
                       )}
 

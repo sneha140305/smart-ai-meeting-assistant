@@ -5,7 +5,7 @@ from app.database import models
 from app.routers.auth import router as auth_router
 from app.routers.meetings import router as meetings_router
 from fastapi.middleware.cors import CORSMiddleware
-
+from app.routers.websocket import router as websocket_router
 Base.metadata.create_all(bind=engine)
 
 
@@ -28,6 +28,7 @@ app.add_middleware(
 
 app.include_router(auth_router)
 app.include_router(meetings_router)
+app.include_router(websocket_router)
 
 @app.get("/")
 def root():
