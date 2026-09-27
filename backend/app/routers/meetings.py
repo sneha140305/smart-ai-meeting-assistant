@@ -1,6 +1,8 @@
 import json
 import os
 import shutil
+from unittest import result
+from unittest import result
 import uuid
 
 from fastapi import (
@@ -36,8 +38,8 @@ from app.services.processing_pipeline import (
     process_meeting_pipeline,
 )
 from app.services.pdf_report import generate_meeting_pdf
-
-
+from app.schemas.meeting import MeetingQuestion
+from app.services.meeting_rag import ask_meeting_rag
 router = APIRouter(
     prefix="/meetings",
     tags=["Meetings"]
@@ -327,7 +329,69 @@ def search_meetings(
 
     return meetings
 
+@router.post("/{meeting_id}/ask")
+def ask_question(
+    meeting_id: int,
+    request: MeetingQuestion,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    meeting = (
+        db.query(Meeting)
+        .filter(
+            Meeting.id == meeting_id,
+            Meeting.owner_id == current_user.id
+        )
+        .first()
+    )
 
+    if not meeting:
+        raise HTTPException(
+            status_code=404,
+            detail="Meeting not found"
+        )
+
+    transcript = (
+        db.query(Transcript)
+        .filter(
+            Transcript.meeting_id == meeting_id
+        )
+        .first()
+    )
+
+    if not transcript or not transcript.content:
+        raise HTTPException(
+            status_code=400,
+            detail="Meeting transcript is not available"
+        )
+
+    question = request.question.strip()
+
+    if not question:
+        raise HTTPException(
+            status_code=400,
+            detail="Question cannot be empty"
+        )
+
+    try:
+
+        answer = ask_meeting_rag(
+            meeting_id=meeting_id,
+            question=question
+        )
+
+        return {
+            "question": question,
+            "answer": result["answer"],
+            "sources": result["sources"]
+        }
+
+    except Exception as error:
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"AI Copilot failed: {str(error)}"
+        )
 # ============================================================
 # GET SINGLE MEETING
 # ============================================================

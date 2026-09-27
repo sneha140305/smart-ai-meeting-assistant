@@ -22,7 +22,7 @@ from app.services.analytics import calculate_meeting_analytics
 from app.services.meeting_score import calculate_meeting_score
 from app.services.pdf_report import generate_meeting_pdf
 from app.services.websocket_manager import manager
-
+from app.services.meeting_rag import index_meeting
 
 # ============================================================
 # DATABASE STATUS UPDATE
@@ -300,6 +300,10 @@ def process_meeting_pipeline(meeting_id: int):
                 transcript_segments,
                 speaker_segments,
             )
+        )
+        index_meeting(
+            meeting_id,
+            merged_segments
         )
 
         # Save merged segments

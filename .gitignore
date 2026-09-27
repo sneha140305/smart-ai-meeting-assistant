@@ -1,5 +1,6 @@
 # Python
 venv/
+.venv/
 __pycache__/
 *.pyc
 
@@ -12,6 +13,11 @@ __pycache__/
 # Uploads
 backend/uploads/
 
+# Processed files
+backend/processed_audio/
+backend/reports/
+backend/meeting_vector_db/
+
 # IDE
 .vscode/
 
@@ -22,9 +28,3 @@ dist/
 # OS
 .DS_Store
 Thumbs.db
-
-# Processed audio
-backend/processed_audio/
-
-
-

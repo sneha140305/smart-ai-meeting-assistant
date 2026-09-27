@@ -1,5 +1,5 @@
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict,Field
 
 
 class MeetingResponse(BaseModel):
@@ -25,3 +25,10 @@ class MeetingResponse(BaseModel):
     effectiveness_rating: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
+class MeetingQuestion(BaseModel):
+    question: str = Field(
+        ...,
+        min_length=2,
+        max_length=1000
+    )

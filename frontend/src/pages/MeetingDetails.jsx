@@ -1,42 +1,44 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
+
 import {
   ArrowLeft,
-  CalendarDays,
-  Check,
-  CheckCircle,
-  Clock,
   Download,
-  FileAudio,
   FileText,
-  Lightbulb,
+  Headphones,
   LoaderCircle,
-  MessageSquareText,
-  Pause,
   Play,
+  Pause,
   RefreshCw,
   Search,
-  Sparkles,
-  Target,
   Users,
+  CheckCircle2,
+  Clock,
+  AlertCircle,
+  Brain,
+  BarChart3,
+  ListChecks,
+  MessageSquare,
+  Sparkles,
+  Send,
   Volume2,
+  ChevronRight,
   X
 } from "lucide-react";
 
-import { useNavigate, useParams } from "react-router-dom";
-
 import api from "../services/api";
+import MeetingProcessingBar from "../components/MeetingProcessingBar";
 import { useAuth } from "../context/AuthContext";
 
 
 export default function MeetingDetails() {
-
   const { meetingId } = useParams();
   const navigate = useNavigate();
   const { logout } = useAuth();
 
-  // --------------------------------------------------
+  // =========================================================
   // STATE
-  // --------------------------------------------------
+  // =========================================================
 
   const [meeting, setMeeting] = useState(null);
 
@@ -50,19 +52,18 @@ export default function MeetingDetails() {
 
   const [error, setError] = useState("");
 
-  const [activeTab, setActiveTab] = useState("overview");
+  const [activeTab, setActiveTab] =
+    useState("overview");
 
-  const [processing, setProcessing] = useState(false);
-
-  const [liveProgress, setLiveProgress] = useState(null);
-
-  // Transcript
-  const [transcriptSearch, setTranscriptSearch] = useState("");
-
-  const [speakerFilter, setSpeakerFilter] = useState("all");
+  // Processing
+  const [liveProgress, setLiveProgress] =
+    useState(null);
 
   // Audio
-  const [audioUrl, setAudioUrl] = useState("");
+  const audioRef = useRef(null);
+
+  const [audioUrl, setAudioUrl] =
+    useState("");
 
   const [audioCurrentTime, setAudioCurrentTime] =
     useState(0);
@@ -70,39 +71,66 @@ export default function MeetingDetails() {
   const [audioDuration, setAudioDuration] =
     useState(0);
 
+  const [audioLoading, setAudioLoading] =
+    useState(false);
+
+  const [isPlaying, setIsPlaying] =
+    useState(false);
+
+  // Transcript
+  const [transcriptSearch, setTranscriptSearch] =
+    useState("");
+
+  const [speakerFilter, setSpeakerFilter] =
+    useState("all");
+
+  const transcriptRefs =
+    useRef([]);
+
+  const lastActiveSegment =
+    useRef(-1);
+
   // Action items
   const [actionFilter, setActionFilter] =
     useState("all");
 
-  const [updatingAction, setUpdatingAction] =
+  const [actionUpdating, setActionUpdating] =
     useState(null);
 
+  // Copilot
+  const [copilotQuestion, setCopilotQuestion] =
+    useState("");
 
-  // --------------------------------------------------
-  // REFS
-  // --------------------------------------------------
+  const [copilotAnswer, setCopilotAnswer] =
+    useState("");
 
-  const audioRef = useRef(null);
+  const [copilotSources, setCopilotSources] =
+    useState([]);
 
-  const transcriptRefs = useRef([]);
+  const [copilotLoading, setCopilotLoading] =
+    useState(false);
 
-  const lastActiveSegment = useRef(-1);
+  const [copilotError, setCopilotError] =
+    useState("");
 
+  // Report
+  const [reportLoading, setReportLoading] =
+    useState(false);
 
-  // --------------------------------------------------
+  // =========================================================
   // TABS
-  // --------------------------------------------------
+  // =========================================================
 
   const tabs = [
     {
       id: "overview",
       label: "Overview",
-      icon: Target
+      icon: BarChart3
     },
     {
       id: "transcript",
       label: "Transcript",
-      icon: MessageSquareText
+      icon: FileText
     },
     {
       id: "speakers",
@@ -112,62 +140,56 @@ export default function MeetingDetails() {
     {
       id: "actions",
       label: "Action Items",
-      icon: CheckCircle
+      icon: ListChecks
     },
     {
       id: "ai",
       label: "AI Insights",
-      icon: Sparkles
+      icon: Brain
     },
     {
       id: "analytics",
       label: "Analytics",
-      icon: Target
+      icon: BarChart3
     }
   ];
 
-
-  // --------------------------------------------------
+  // =========================================================
   // FETCH MEETING
-  // --------------------------------------------------
+  // =========================================================
 
   const loadMeeting = async () => {
-
     try {
-
       const response = await api.get(
         `/meetings/${meetingId}`
       );
 
       setMeeting(response.data);
 
-      return response.data;
-
     } catch (err) {
-
       console.error(
-        "Meeting loading error:",
+        "Meeting fetch error:",
         err
       );
 
       if (err.response?.status === 401) {
         logout();
-        return null;
+        return;
       }
 
-      throw err;
+      setError(
+        err.response?.data?.detail ||
+        "Unable to load meeting."
+      );
     }
   };
 
-
-  // --------------------------------------------------
+  // =========================================================
   // FETCH TRANSCRIPT
-  // --------------------------------------------------
+  // =========================================================
 
   const loadTranscript = async () => {
-
     try {
-
       const response = await api.get(
         `/meetings/${meetingId}/transcript`
       );
@@ -175,30 +197,22 @@ export default function MeetingDetails() {
       setTranscript(response.data);
 
     } catch (err) {
-
-      if (err.response?.status === 404) {
-
-        setTranscript(null);
-
-        return;
-      }
-
       console.error(
-        "Transcript loading error:",
+        "Transcript fetch error:",
         err
       );
+
+      // Transcript may not exist yet.
+      setTranscript(null);
     }
   };
 
-
-  // --------------------------------------------------
+  // =========================================================
   // FETCH ACTION ITEMS
-  // --------------------------------------------------
+  // =========================================================
 
   const loadActionItems = async () => {
-
     try {
-
       const response = await api.get(
         `/meetings/${meetingId}/action-items`
       );
@@ -210,30 +224,21 @@ export default function MeetingDetails() {
       );
 
     } catch (err) {
-
-      if (err.response?.status === 404) {
-
-        setActionItems([]);
-
-        return;
-      }
-
       console.error(
-        "Action items loading error:",
+        "Action items fetch error:",
         err
       );
+
+      setActionItems([]);
     }
   };
 
-
-  // --------------------------------------------------
+  // =========================================================
   // FETCH SPEAKER ANALYTICS
-  // --------------------------------------------------
+  // =========================================================
 
   const loadSpeakerAnalytics = async () => {
-
     try {
-
       const response = await api.get(
         `/meetings/${meetingId}/speaker-analytics`
       );
@@ -245,30 +250,21 @@ export default function MeetingDetails() {
       );
 
     } catch (err) {
-
-      if (err.response?.status === 404) {
-
-        setSpeakerAnalytics([]);
-
-        return;
-      }
-
       console.error(
         "Speaker analytics error:",
         err
       );
+
+      setSpeakerAnalytics([]);
     }
   };
 
+  // =========================================================
+  // LOAD EVERYTHING
+  // =========================================================
 
-  // --------------------------------------------------
-  // LOAD ALL DATA
-  // --------------------------------------------------
-
-  const loadAllData = async () => {
-
+  const loadAll = async () => {
     try {
-
       setLoading(true);
       setError("");
 
@@ -279,54 +275,40 @@ export default function MeetingDetails() {
         loadSpeakerAnalytics()
       ]);
 
-    } catch (err) {
-
-      setError(
-        err.response?.data?.detail ||
-        "Unable to load meeting."
-      );
-
     } finally {
-
       setLoading(false);
     }
   };
 
-
   useEffect(() => {
+    if (!meetingId) {
+      return;
+    }
 
-    if (!meetingId) return;
-
-    loadAllData();
-
+    loadAll();
   }, [meetingId]);
 
-
-  // --------------------------------------------------
-  // WEBSOCKET
-  // --------------------------------------------------
+  // =========================================================
+  // WEBSOCKET PROCESSING
+  // =========================================================
 
   useEffect(() => {
-
-    if (!meetingId) return;
+    if (!meetingId) {
+      return;
+    }
 
     const socket = new WebSocket(
       `ws://127.0.0.1:8000/ws/meetings/${meetingId}`
     );
 
     socket.onopen = () => {
-
       console.log(
         "Connected to meeting processing updates"
       );
-
     };
 
-
     socket.onmessage = (event) => {
-
       try {
-
         const data = JSON.parse(
           event.data
         );
@@ -339,92 +321,70 @@ export default function MeetingDetails() {
         setLiveProgress(data);
 
         setMeeting((previous) => {
-
           if (!previous) {
             return previous;
           }
 
           return {
             ...previous,
-            status: data.status,
+
+            status:
+              data.status ||
+              previous.status,
+
             processing_stage:
-              data.stage,
+              data.stage ||
+              previous.processing_stage,
+
             processing_message:
-              data.message,
+              data.message ||
+              previous.processing_message,
+
             processing_progress:
-              data.progress
+              data.progress ??
+              previous.processing_progress
           };
-
         });
-
 
         if (
           data.status === "completed"
         ) {
-
-          setProcessing(false);
-
-          loadAllData();
-
-        }
-
-
-        if (
-          data.status === "processing_failed" ||
-          data.status === "analysis_failed"
-        ) {
-
-          setProcessing(false);
-
+          loadAll();
         }
 
       } catch (err) {
-
         console.error(
           "WebSocket message error:",
           err
         );
-
       }
-
     };
 
-
-    socket.onerror = (err) => {
-
+    socket.onerror = (event) => {
       console.error(
         "WebSocket error:",
-        err
+        event
       );
-
     };
 
-
     socket.onclose = () => {
-
       console.log(
         "Meeting WebSocket disconnected"
       );
-
     };
-
 
     return () => {
-
       socket.close();
-
     };
-
   }, [meetingId]);
 
-
-  // --------------------------------------------------
-  // AUDIO URL
-  // --------------------------------------------------
+  // =========================================================
+  // AUDIO
+  // =========================================================
 
   const loadAudio = async () => {
-
     try {
+      setAudioLoading(true);
 
       const response = await api.get(
         `/meetings/${meetingId}/audio`,
@@ -437,190 +397,93 @@ export default function MeetingDetails() {
         response.data
       );
 
-      setAudioUrl(url);
+      setAudioUrl((oldUrl) => {
+        if (oldUrl) {
+          URL.revokeObjectURL(oldUrl);
+        }
+
+        return url;
+      });
 
     } catch (err) {
-
       console.error(
         "Audio loading error:",
         err
       );
-
+    } finally {
+      setAudioLoading(false);
     }
-
   };
 
-
   useEffect(() => {
-
-    if (!meetingId) return;
+    if (!meetingId) {
+      return;
+    }
 
     loadAudio();
 
     return () => {
-
       setAudioUrl((currentUrl) => {
-
         if (currentUrl) {
-          URL.revokeObjectURL(currentUrl);
+          URL.revokeObjectURL(
+            currentUrl
+          );
         }
 
         return "";
       });
-
     };
-
   }, [meetingId]);
 
-
-  // --------------------------------------------------
-  // PROCESS MEETING
-  // --------------------------------------------------
-
-  const processMeeting = async () => {
-
-    try {
-
-      setProcessing(true);
-
-      setError("");
-
-      const response = await api.post(
-        `/meetings/${meetingId}/process`
-      );
-
-      console.log(
-        "Processing started:",
-        response.data
-      );
-
-      setLiveProgress({
-        status: "processing",
-        stage: "starting",
-        message:
-          "Starting meeting processing...",
-        progress: 5
-      });
-
-    } catch (err) {
-
-      console.error(
-        "Processing error:",
-        err
-      );
-
-      setProcessing(false);
-
-      setError(
-        err.response?.data?.detail ||
-        "Unable to start processing."
-      );
-
-    }
-
-  };
-
-
-  // --------------------------------------------------
-  // DIARIZE
-  // --------------------------------------------------
-
-  const diarizeMeeting = async () => {
-
-    try {
-
-      setProcessing(true);
-
-      await api.post(
-        `/meetings/${meetingId}/diarize`
-      );
-
-      await loadAllData();
-
-    } catch (err) {
-
-      setError(
-        err.response?.data?.detail ||
-        "Speaker identification failed."
-      );
-
-    } finally {
-
-      setProcessing(false);
-
-    }
-
-  };
-
-
-  // --------------------------------------------------
-  // ANALYZE
-  // --------------------------------------------------
-
-  const analyzeMeeting = async () => {
-
-    try {
-
-      setProcessing(true);
-
-      setError("");
-
-      await api.post(
-        `/meetings/${meetingId}/analyze`
-      );
-
-      await loadAllData();
-
-    } catch (err) {
-
-      console.error(
-        "Analysis error:",
-        err
-      );
-
-      setError(
-        err.response?.data?.detail ||
-        "Meeting analysis failed."
-      );
-
-    } finally {
-
-      setProcessing(false);
-
-    }
-
-  };
-
-
-  // --------------------------------------------------
-  // AUDIO HANDLERS
-  // --------------------------------------------------
-
   const handleAudioTimeUpdate = () => {
-
-    if (!audioRef.current) return;
+    if (!audioRef.current) {
+      return;
+    }
 
     setAudioCurrentTime(
       audioRef.current.currentTime
     );
-
   };
 
-
   const handleAudioLoaded = () => {
-
-    if (!audioRef.current) return;
+    if (!audioRef.current) {
+      return;
+    }
 
     setAudioDuration(
       audioRef.current.duration || 0
     );
-
   };
 
+  const toggleAudio = async () => {
+    if (!audioRef.current) {
+      return;
+    }
 
-  const jumpToTimestamp = (seconds) => {
+    if (
+      audioRef.current.paused
+    ) {
+      try {
+        await audioRef.current.play();
+        setIsPlaying(true);
+      } catch (err) {
+        console.error(
+          "Audio play error:",
+          err
+        );
+      }
+    } else {
+      audioRef.current.pause();
+      setIsPlaying(false);
+    }
+  };
 
-    if (!audioRef.current) return;
+  const jumpToTimestamp = (
+    seconds
+  ) => {
+    if (!audioRef.current) {
+      return;
+    }
 
     audioRef.current.currentTime =
       Number(seconds) || 0;
@@ -629,151 +492,62 @@ export default function MeetingDetails() {
       Number(seconds) || 0
     );
 
-    audioRef.current.play().catch(() => {});
-
+    audioRef.current
+      .play()
+      .then(() => {
+        setIsPlaying(true);
+      })
+      .catch(() => {});
   };
 
+  const formatTimestamp = (
+    seconds
+  ) => {
+    const value =
+      Number(seconds) || 0;
 
-  const formatTimestamp = (seconds) => {
+    const minutes =
+      Math.floor(value / 60);
 
-    const value = Number(seconds) || 0;
-
-    const minutes = Math.floor(
-      value / 60
-    );
-
-    const remainingSeconds = Math.floor(
-      value % 60
-    );
+    const remainingSeconds =
+      Math.floor(value % 60);
 
     return `${String(minutes).padStart(
       2,
       "0"
-    )}:${String(remainingSeconds).padStart(
-      2,
-      "0"
-    )}`;
-
+    )}:${String(
+      remainingSeconds
+    ).padStart(2, "0")}`;
   };
 
-
-  const formatDuration = (seconds) => {
-
-    if (!seconds || Number.isNaN(seconds)) {
-      return "00:00";
-    }
-
-    return formatTimestamp(seconds);
-
-  };
-
-
-  // --------------------------------------------------
-  // TRANSCRIPT SEGMENTS
-  // --------------------------------------------------
-
-  const transcriptSegments = useMemo(() => {
-
-    if (
-      !transcript ||
-      !Array.isArray(transcript.segments)
-    ) {
-
-      return [];
-
-    }
-
-    return transcript.segments;
-
-  }, [transcript]);
-
-
-  const speakers = useMemo(() => {
-
-    return [
-      ...new Set(
-        transcriptSegments
-          .map(
-            (segment) =>
-              segment.speaker
-          )
-          .filter(Boolean)
-      )
-    ];
-
-  }, [transcriptSegments]);
-
-
-  const filteredTranscript = useMemo(() => {
-
-    const search =
-      transcriptSearch
-        .trim()
-        .toLowerCase();
-
-    return transcriptSegments.filter(
-      (segment) => {
-
-        const matchesSearch =
-          !search ||
-          segment.text
-            ?.toLowerCase()
-            .includes(search);
-
-        const matchesSpeaker =
-          speakerFilter === "all" ||
-          segment.speaker ===
-            speakerFilter;
-
-        return (
-          matchesSearch &&
-          matchesSpeaker
-        );
-
-      }
-    );
-
-  }, [
-    transcriptSegments,
-    transcriptSearch,
-    speakerFilter
-  ]);
-
-
-  // --------------------------------------------------
+  // =========================================================
   // ACTIVE TRANSCRIPT SEGMENT
-  // --------------------------------------------------
+  // =========================================================
 
-  const activeSegmentIndex = useMemo(() => {
+  const transcriptSegments =
+    Array.isArray(
+      transcript?.segments
+    )
+      ? transcript.segments
+      : [];
 
-    if (!transcriptSegments.length) {
-      return -1;
-    }
-
-    return transcriptSegments.findIndex(
+  const activeSegmentIndex =
+    transcriptSegments.findIndex(
       (segment) =>
         audioCurrentTime >=
-          Number(segment.start) &&
+          Number(segment.start || 0) &&
         audioCurrentTime <
-          Number(segment.end)
+          Number(segment.end || 0)
     );
 
-  }, [
-    transcriptSegments,
-    audioCurrentTime
-  ]);
-
-
+  // Auto-scroll only when active segment changes.
   useEffect(() => {
-
     if (
       activeSegmentIndex < 0 ||
       activeSegmentIndex ===
         lastActiveSegment.current
     ) {
-
       return;
-
     }
 
     lastActiveSegment.current =
@@ -785,127 +559,187 @@ export default function MeetingDetails() {
       ];
 
     if (element) {
-
       element.scrollIntoView({
         behavior: "smooth",
         block: "center"
       });
-
     }
-
   }, [activeSegmentIndex]);
 
+  // =========================================================
+  // TRANSCRIPT FILTERING
+  // =========================================================
 
-  // --------------------------------------------------
-  // ACTION ITEM FILTER
-  // --------------------------------------------------
+  const speakers = useMemo(() => {
+    const unique =
+      new Set();
 
-  const isOverdue = (item) => {
+    transcriptSegments.forEach(
+      (segment) => {
+        if (segment.speaker) {
+          unique.add(
+            segment.speaker
+          );
+        }
+      }
+    );
 
+    return Array.from(unique);
+  }, [transcriptSegments]);
+
+  const filteredTranscript =
+    useMemo(() => {
+      const search =
+        transcriptSearch
+          .trim()
+          .toLowerCase();
+
+      return transcriptSegments
+        .map(
+          (segment, index) => ({
+            ...segment,
+            originalIndex: index
+          })
+        )
+        .filter((segment) => {
+          const matchesSearch =
+            !search ||
+            segment.text
+              ?.toLowerCase()
+              .includes(search);
+
+          const matchesSpeaker =
+            speakerFilter === "all" ||
+            segment.speaker ===
+              speakerFilter;
+
+          return (
+            matchesSearch &&
+            matchesSpeaker
+          );
+        });
+    }, [
+      transcriptSegments,
+      transcriptSearch,
+      speakerFilter
+    ]);
+
+  // =========================================================
+  // ACTION ITEMS
+  // =========================================================
+
+  const isOverdue = (
+    item
+  ) => {
     if (!item.deadline) {
       return false;
     }
 
     if (
-      item.status === "completed"
+      item.status ===
+      "completed"
     ) {
-
       return false;
-
     }
 
-    const deadline =
+    const date =
       new Date(item.deadline);
 
     if (
       Number.isNaN(
-        deadline.getTime()
+        date.getTime()
       )
     ) {
-
       return false;
-
     }
 
-    return deadline < new Date();
-
+    return date < new Date();
   };
-
 
   const filteredActionItems =
     useMemo(() => {
-
       return actionItems.filter(
         (item) => {
+          if (
+            actionFilter === "all"
+          ) {
+            return true;
+          }
 
           if (
             actionFilter === "overdue"
           ) {
-
             return isOverdue(item);
-
-          }
-
-          if (
-            actionFilter === "all"
-          ) {
-
-            return true;
-
           }
 
           return (
             item.status ===
             actionFilter
           );
-
         }
       );
-
     }, [
       actionItems,
       actionFilter
     ]);
 
+  const actionStats =
+    useMemo(() => {
+      return {
+        total: actionItems.length,
 
-  // --------------------------------------------------
-  // ACTION ITEM UPDATE
-  // --------------------------------------------------
+        pending:
+          actionItems.filter(
+            (item) =>
+              item.status ===
+              "pending"
+          ).length,
+
+        inProgress:
+          actionItems.filter(
+            (item) =>
+              item.status ===
+              "in_progress"
+          ).length,
+
+        completed:
+          actionItems.filter(
+            (item) =>
+              item.status ===
+              "completed"
+          ).length,
+
+        overdue:
+          actionItems.filter(
+            (item) =>
+              isOverdue(item)
+          ).length
+      };
+    }, [actionItems]);
 
   const updateActionItem = async (
-    item,
-    changes
+    itemId,
+    updates
   ) => {
-
     try {
+      setActionUpdating(itemId);
 
-      setUpdatingAction(item.id);
-
-      /*
-       * The backend accepts the action item
-       * update through the meeting action-item route.
-       */
-
-      const response = await api.put(
-        `/meetings/${meetingId}/action-items/${item.id}`,
-        changes
-      );
-
-      const updated =
-        response.data;
+      const response =
+        await api.patch(
+          `/meetings/action-items/${itemId}`,
+          updates
+        );
 
       setActionItems(
         (previous) =>
-          previous.map(
-            (current) =>
-              current.id === item.id
-                ? updated
-                : current
+          previous.map((item) =>
+            item.id === itemId
+              ? response.data
+              : item
           )
       );
 
     } catch (err) {
-
       console.error(
         "Action item update error:",
         err
@@ -917,54 +751,128 @@ export default function MeetingDetails() {
       );
 
     } finally {
-
-      setUpdatingAction(null);
-
+      setActionUpdating(null);
     }
-
   };
 
+  // =========================================================
+  // COPILOT
+  // =========================================================
 
-  // --------------------------------------------------
-  // DOWNLOAD PDF
-  // --------------------------------------------------
+  const askCopilot = async (
+    event
+  ) => {
+    event?.preventDefault();
 
-  const downloadReport = async () => {
+    const question =
+      copilotQuestion.trim();
+
+    if (!question) {
+      return;
+    }
 
     try {
+      setCopilotLoading(true);
+      setCopilotError("");
+      setCopilotAnswer("");
+      setCopilotSources([]);
 
-      const response = await api.get(
-        `/meetings/${meetingId}/report`,
-        {
-          responseType: "blob"
-        }
+      const response =
+        await api.post(
+          `/meetings/${meetingId}/ask`,
+          {
+            question
+          }
+        );
+
+      setCopilotAnswer(
+        response.data.answer || ""
       );
+
+      setCopilotSources(
+        Array.isArray(
+          response.data.sources
+        )
+          ? response.data.sources
+          : []
+      );
+
+    } catch (err) {
+      console.error(
+        "Copilot error:",
+        err
+      );
+
+      setCopilotError(
+        err.response?.data?.detail ||
+        "Unable to get an AI answer."
+      );
+
+    } finally {
+      setCopilotLoading(false);
+    }
+  };
+
+  const suggestedQuestions = [
+    "What were the main decisions?",
+    "What action items were assigned?",
+    "What issues are still unresolved?",
+    "Summarize the key discussion points."
+  ];
+
+  // =========================================================
+  // PDF REPORT
+  // =========================================================
+
+  const downloadReport = async () => {
+    try {
+      setReportLoading(true);
+
+      const response =
+        await api.get(
+          `/meetings/${meetingId}/report`,
+          {
+            responseType: "blob"
+          }
+        );
+
+      const blob =
+        new Blob(
+          [response.data],
+          {
+            type:
+              "application/pdf"
+          }
+        );
 
       const url =
         window.URL.createObjectURL(
-          new Blob([response.data])
+          blob
         );
 
       const link =
-        document.createElement("a");
+        document.createElement(
+          "a"
+        );
 
       link.href = url;
 
-      link.setAttribute(
-        "download",
-        `meeting_report_${meetingId}.pdf`
-      );
+      link.download =
+        `meeting_report_${meetingId}.pdf`;
 
-      document.body.appendChild(link);
+      document.body.appendChild(
+        link
+      );
 
       link.click();
 
       link.remove();
 
-      window.URL.revokeObjectURL(url);
+      window.URL.revokeObjectURL(
+        url
+      );
 
     } catch (err) {
-
       console.error(
         "Report download error:",
         err
@@ -975,116 +883,79 @@ export default function MeetingDetails() {
         "Unable to download report."
       );
 
+    } finally {
+      setReportLoading(false);
     }
-
   };
 
+  // =========================================================
+  // FORMATTING
+  // =========================================================
 
-  // --------------------------------------------------
-  // PARSE JSON SAFELY
-  // --------------------------------------------------
-
-  const parseJSON = (
-    value,
-    fallback = []
+  const formatDate = (
+    value
   ) => {
-
     if (!value) {
-      return fallback;
-    }
-
-    if (
-      Array.isArray(value)
-    ) {
-
-      return value;
-
+      return "Date unavailable";
     }
 
     try {
-
-      const parsed =
-        JSON.parse(value);
-
-      return parsed;
-
+      return new Date(
+        value
+      ).toLocaleDateString(
+        "en-IN",
+        {
+          day: "2-digit",
+          month: "short",
+          year: "numeric"
+        }
+      );
     } catch {
-
-      return fallback;
-
+      return "Date unavailable";
     }
-
   };
 
+  const formatDuration = (
+    seconds
+  ) => {
+    if (
+      seconds === null ||
+      seconds === undefined
+    ) {
+      return "—";
+    }
 
-  const keyPoints =
-    parseJSON(
-      meeting?.key_points,
-      []
-    );
+    const value =
+      Number(seconds);
 
+    if (
+      Number.isNaN(value)
+    ) {
+      return "—";
+    }
 
-  const decisions =
-    parseJSON(
-      meeting?.decisions,
-      []
-    );
+    const minutes =
+      Math.floor(value / 60);
 
+    const remaining =
+      Math.floor(value % 60);
 
-  const insights =
-    parseJSON(
-      meeting?.meeting_insights,
-      []
-    );
-
-
-  const recommendations =
-    parseJSON(
-      meeting?.meeting_recommendations,
-      []
-    );
-
-
-  // --------------------------------------------------
-  // SCORE BREAKDOWN
-  // --------------------------------------------------
-
-  const scoreBreakdown =
-    meeting?.score_breakdown ||
-    meeting?.meeting_score?.breakdown ||
-    null;
-
-
-  const effectivenessScore =
-    meeting?.effectiveness_score ??
-    meeting?.meeting_score?.score ??
-    null;
-
-
-  const effectivenessRating =
-    meeting?.effectiveness_rating ??
-    meeting?.meeting_score?.rating ??
-    "";
-
-
-  // --------------------------------------------------
-  // STATUS
-  // --------------------------------------------------
+    return `${minutes}m ${remaining}s`;
+  };
 
   const getStatusStyle = (
     status
   ) => {
-
     const normalized =
-      status?.toLowerCase();
+      status
+        ?.toLowerCase()
+        ?.trim();
 
     if (
       normalized ===
       "completed"
     ) {
-
       return "bg-green-100 text-green-700";
-
     }
 
     if (
@@ -1097,9 +968,7 @@ export default function MeetingDetails() {
         "analyzing"
       ].includes(normalized)
     ) {
-
       return "bg-yellow-100 text-yellow-700";
-
     }
 
     if (
@@ -1111,136 +980,217 @@ export default function MeetingDetails() {
         "diarization_failed"
       ].includes(normalized)
     ) {
-
       return "bg-red-100 text-red-700";
-
     }
 
-    return "bg-gray-100 text-gray-600";
-
+    return "bg-slate-100 text-slate-600";
   };
 
-
-  const getReadableStatus = (
-    status
+  const getPriorityStyle = (
+    priority
   ) => {
-
-    if (!status) {
-      return "Unknown";
+    if (
+      priority === "high"
+    ) {
+      return "bg-red-100 text-red-700";
     }
 
-    return status
-      .replaceAll("_", " ")
-      .replace(
-        /\b\w/g,
-        (char) =>
-          char.toUpperCase()
-      );
+    if (
+      priority === "low"
+    ) {
+      return "bg-slate-100 text-slate-600";
+    }
 
+    return "bg-yellow-100 text-yellow-700";
   };
 
+  const getInsightStyle = (
+    type
+  ) => {
+    if (
+      type === "positive"
+    ) {
+      return "border-green-200 bg-green-50";
+    }
 
-  // --------------------------------------------------
-  // PROCESSING DATA
-  // --------------------------------------------------
+    if (
+      type === "warning"
+    ) {
+      return "border-yellow-200 bg-yellow-50";
+    }
 
-  const progress =
-    liveProgress?.progress ??
-    meeting?.processing_progress ??
-    0;
+    return "border-blue-200 bg-blue-50";
+  };
 
+  // =========================================================
+  // SCORE
+  // =========================================================
 
-  const progressMessage =
-    liveProgress?.message ||
-    meeting?.processing_message ||
-    "Preparing meeting...";
+  const score =
+    meeting?.effectiveness_score;
 
+  const scoreBreakdown =
+    meeting?.effectiveness_breakdown ||
+    meeting?.score_breakdown ||
+    {};
 
-  // --------------------------------------------------
-  // ACTION STATS
-  // --------------------------------------------------
+  // =========================================================
+  // AI INSIGHTS
+  // =========================================================
 
-  const pendingCount =
-    actionItems.filter(
-      (item) =>
-        item.status === "pending"
-    ).length;
+  let insights = [];
 
+  let recommendations = [];
 
-  const inProgressCount =
-    actionItems.filter(
-      (item) =>
-        item.status === "in_progress"
-    ).length;
+  try {
+    if (
+      Array.isArray(
+        meeting?.meeting_insights
+      )
+    ) {
+      insights =
+        meeting.meeting_insights;
+    } else if (
+      typeof meeting?.meeting_insights ===
+      "string"
+    ) {
+      insights = JSON.parse(
+        meeting.meeting_insights
+      );
+    }
+  } catch {
+    insights = [];
+  }
 
+  try {
+    if (
+      Array.isArray(
+        meeting?.meeting_recommendations
+      )
+    ) {
+      recommendations =
+        meeting.meeting_recommendations;
+    } else if (
+      typeof meeting?.meeting_recommendations ===
+      "string"
+    ) {
+      recommendations =
+        JSON.parse(
+          meeting.meeting_recommendations
+        );
+    }
+  } catch {
+    recommendations = [];
+  }
 
-  const completedActionCount =
-    actionItems.filter(
-      (item) =>
-        item.status === "completed"
-    ).length;
+  // =========================================================
+  // KEY POINTS / DECISIONS
+  // =========================================================
 
+  let keyPoints = [];
 
-  const overdueCount =
-    actionItems.filter(
-      (item) =>
-        isOverdue(item)
-    ).length;
+  let decisions = [];
 
+  try {
+    if (
+      Array.isArray(
+        meeting?.key_points
+      )
+    ) {
+      keyPoints =
+        meeting.key_points;
+    } else if (
+      typeof meeting?.key_points ===
+      "string"
+    ) {
+      keyPoints =
+        JSON.parse(
+          meeting.key_points
+        );
+    }
+  } catch {
+    keyPoints = [];
+  }
 
-  // --------------------------------------------------
+  try {
+    if (
+      Array.isArray(
+        meeting?.decisions
+      )
+    ) {
+      decisions =
+        meeting.decisions;
+    } else if (
+      typeof meeting?.decisions ===
+      "string"
+    ) {
+      decisions =
+        JSON.parse(
+          meeting.decisions
+        );
+    }
+  } catch {
+    decisions = [];
+  }
+
+  // =========================================================
   // LOADING
-  // --------------------------------------------------
+  // =========================================================
 
   if (loading) {
-
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-50">
+      <div className="min-h-screen bg-slate-50">
 
-        <div className="text-center">
+        <div className="flex min-h-screen items-center justify-center">
 
-          <LoaderCircle
-            size={36}
-            className="mx-auto animate-spin text-slate-600"
-          />
+          <div className="flex flex-col items-center">
 
-          <p className="mt-4 text-sm text-slate-500">
-            Loading meeting...
-          </p>
+            <LoaderCircle
+              size={36}
+              className="animate-spin text-slate-600"
+            />
+
+            <p className="mt-4 text-sm text-slate-500">
+              Loading meeting...
+            </p>
+
+          </div>
 
         </div>
 
       </div>
     );
-
   }
 
-
-  // --------------------------------------------------
-  // MEETING NOT FOUND
-  // --------------------------------------------------
+  // =========================================================
+  // NOT FOUND
+  // =========================================================
 
   if (!meeting) {
-
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-50">
+      <div className="min-h-screen bg-slate-50">
 
-        <div className="text-center">
+        <div className="mx-auto max-w-3xl px-6 py-16 text-center">
 
-          <FileText
-            size={42}
-            className="mx-auto text-slate-400"
+          <AlertCircle
+            size={40}
+            className="mx-auto text-red-500"
           />
 
-          <h2 className="mt-4 text-xl font-semibold">
+          <h2 className="mt-4 text-xl font-semibold text-slate-900">
             Meeting not found
           </h2>
+
+          <p className="mt-2 text-sm text-slate-500">
+            {error ||
+              "The requested meeting could not be loaded."}
+          </p>
 
           <button
             onClick={() =>
               navigate("/dashboard")
             }
-            className="mt-5 rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-medium text-white"
+            className="mt-6 rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-medium text-white hover:bg-slate-700"
           >
             Back to Dashboard
           </button>
@@ -1249,181 +1199,134 @@ export default function MeetingDetails() {
 
       </div>
     );
-
   }
 
-
-  // --------------------------------------------------
-  // RENDER
-  // --------------------------------------------------
+  // =========================================================
+  // MAIN UI
+  // =========================================================
 
   return (
-
     <div className="min-h-screen bg-slate-50">
 
-      {/* ============================================ */}
-      {/* NAVBAR */}
-      {/* ============================================ */}
+      {/* =====================================================
+          HEADER
+      ====================================================== */}
 
       <header className="border-b bg-white">
 
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
+        <div className="mx-auto max-w-7xl px-6 py-4">
 
-          <div>
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
 
-            <h1 className="text-xl font-bold text-slate-900">
-              Smart AI Meeting Assistant
-            </h1>
+            <div className="flex items-start gap-3">
 
-            <p className="text-sm text-slate-500">
-              Meeting intelligence workspace
-            </p>
+              <button
+                onClick={() =>
+                  navigate("/dashboard")
+                }
+                className="mt-1 rounded-lg border border-slate-200 p-2 text-slate-600 hover:bg-slate-100"
+                title="Back"
+              >
+                <ArrowLeft
+                  size={18}
+                />
+              </button>
 
-          </div>
+              <div>
 
-          <button
-            onClick={logout}
-            className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
-          >
-            Logout
-          </button>
-
-        </div>
-
-      </header>
-
-
-      {/* ============================================ */}
-      {/* MAIN */}
-      {/* ============================================ */}
-
-      <main className="mx-auto max-w-7xl px-6 py-8">
-
-        {/* BACK */}
-
-        <button
-          onClick={() =>
-            navigate("/dashboard")
-          }
-          className="mb-5 flex items-center gap-2 text-sm font-medium text-slate-600 hover:text-slate-900"
-        >
-          <ArrowLeft size={17} />
-          Back to meetings
-        </button>
-
-
-        {/* ======================================== */}
-        {/* HEADER */}
-        {/* ======================================== */}
-
-        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-
-          <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-
-            <div>
-
-              <div className="flex flex-wrap items-center gap-3">
-
-                <h2 className="text-2xl font-bold text-slate-900">
-
+                <h1 className="text-2xl font-bold text-slate-900">
                   {meeting.title ||
                     `Meeting #${meeting.id}`}
+                </h1>
 
-                </h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  {meeting.file_name ||
+                    "Meeting recording"}
+                </p>
 
-                <span
-                  className={`rounded-full px-3 py-1 text-xs font-medium ${getStatusStyle(
-                    meeting.status
-                  )}`}
-                >
-                  {getReadableStatus(
-                    meeting.status
-                  )}
-                </span>
+                <div className="mt-3 flex flex-wrap gap-4 text-xs text-slate-500">
 
-              </div>
+                  <span className="flex items-center gap-1">
+                    <Clock size={14} />
 
+                    {formatDate(
+                      meeting.created_at
+                    )}
+                  </span>
 
-              <p className="mt-2 text-sm text-slate-500">
-                {meeting.file_name}
-              </p>
+                  <span className="flex items-center gap-1">
+                    <Headphones
+                      size={14}
+                    />
 
+                    {formatDuration(
+                      meeting.duration
+                    )}
+                  </span>
 
-              <div className="mt-4 flex flex-wrap gap-5 text-sm text-slate-500">
+                  <span className="flex items-center gap-1">
+                    <FileText
+                      size={14}
+                    />
 
-                <span className="flex items-center gap-1.5">
-                  <CalendarDays size={15} />
+                    {meeting.total_words ||
+                      0}{" "}
+                    words
+                  </span>
 
-                  {meeting.created_at
-                    ? new Date(
-                        meeting.created_at
-                      ).toLocaleDateString(
-                        "en-IN",
-                        {
-                          day: "2-digit",
-                          month: "short",
-                          year: "numeric"
-                        }
-                      )
-                    : "Date unavailable"}
-                </span>
+                  <span className="flex items-center gap-1">
+                    <Users
+                      size={14}
+                    />
 
+                    {meeting.speaker_count ||
+                      0}{" "}
+                    speakers
+                  </span>
 
-                <span className="flex items-center gap-1.5">
-                  <Clock size={15} />
-
-                  {meeting.duration
-                    ? formatDuration(
-                        meeting.duration
-                      )
-                    : "Duration unavailable"}
-                </span>
-
-
-                <span className="flex items-center gap-1.5">
-                  <FileText size={15} />
-
-                  {meeting.total_words ||
-                    0}{" "}
-                  words
-                </span>
-
-
-                <span className="flex items-center gap-1.5">
-                  <Users size={15} />
-
-                  {meeting.speaker_count ||
-                    0}{" "}
-                  speakers
-                </span>
+                </div>
 
               </div>
 
             </div>
 
+            <div className="flex items-center gap-2">
 
-            {/* ACTION BUTTONS */}
-
-            <div className="flex flex-wrap gap-2">
+              <span
+                className={`rounded-full px-3 py-1.5 text-xs font-medium ${getStatusStyle(
+                  meeting.status
+                )}`}
+              >
+                {meeting.status ||
+                  "Unknown"}
+              </span>
 
               <button
-                onClick={loadAllData}
-                className="flex items-center gap-2 rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                onClick={loadAll}
+                className="rounded-lg border border-slate-200 p-2.5 text-slate-600 hover:bg-slate-100"
+                title="Refresh"
               >
-                <RefreshCw size={16} />
-                Refresh
+                <RefreshCw
+                  size={18}
+                />
               </button>
-
 
               <button
                 onClick={downloadReport}
-                disabled={
-                  meeting.status !==
-                  "completed"
-                }
-                className="flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={reportLoading}
+                className="flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-60"
               >
-                <Download size={16} />
+                {reportLoading ? (
+                  <LoaderCircle
+                    size={16}
+                    className="animate-spin"
+                  />
+                ) : (
+                  <Download
+                    size={16}
+                  />
+                )}
+
                 Report
               </button>
 
@@ -1431,100 +1334,88 @@ export default function MeetingDetails() {
 
           </div>
 
+          {/* PROCESSING */}
 
-          {/* ====================================== */}
-          {/* PROCESSING BAR */}
-          {/* ====================================== */}
+          <div className="mt-4">
 
-          {meeting.status !==
-            "completed" && (
+            <MeetingProcessingBar
+              meeting={
+                liveProgress
+                  ? {
+                      ...meeting,
+                      status:
+                        liveProgress.status,
+                      processing_stage:
+                        liveProgress.stage,
+                      processing_message:
+                        liveProgress.message,
+                      processing_progress:
+                        liveProgress.progress
+                    }
+                  : meeting
+              }
+            />
 
-            <div className="mt-6 border-t pt-5">
-
-              <div className="mb-2 flex items-center justify-between">
-
-                <div className="flex items-center gap-2">
-
-                  {processing && (
-                    <LoaderCircle
-                      size={15}
-                      className="animate-spin text-blue-600"
-                    />
-                  )}
-
-                  <span className="text-sm text-slate-600">
-                    {progressMessage}
-                  </span>
-
-                </div>
-
-                <span className="text-sm font-semibold text-slate-700">
-                  {progress}%
-                </span>
-
-              </div>
-
-
-              <div className="h-2 overflow-hidden rounded-full bg-slate-100">
-
-                <div
-                  className="h-full rounded-full bg-blue-600 transition-all duration-700"
-                  style={{
-                    width: `${progress}%`
-                  }}
-                />
-
-              </div>
-
-            </div>
-
-          )}
+          </div>
 
         </div>
 
+      </header>
 
-        {/* ======================================== */}
-        {/* ERROR */}
-        {/* ======================================== */}
+      {/* =====================================================
+          ERROR
+      ====================================================== */}
 
-        {error && (
+      {error && (
+        <div className="mx-auto max-w-7xl px-6 pt-4">
 
-          <div className="mt-5 flex items-center justify-between rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          <div className="flex items-center justify-between rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
 
-            <span>
+            <div className="flex items-center gap-2">
+              <AlertCircle
+                size={17}
+              />
+
               {error}
-            </span>
+            </div>
 
             <button
               onClick={() =>
                 setError("")
               }
             >
-              <X size={18} />
+              <X size={17} />
             </button>
 
           </div>
 
-        )}
+        </div>
+      )}
 
+      {/* =====================================================
+          MAIN
+      ====================================================== */}
 
-        {/* ======================================== */}
-        {/* TABS */}
-        {/* ======================================== */}
+      <main className="mx-auto max-w-7xl px-6 py-6">
 
-        <div className="mt-6 rounded-xl border border-slate-200 bg-white shadow-sm">
+        {/* ===================================================
+            TABS
+        ==================================================== */}
 
-          <div className="border-b border-slate-200">
+        <div className="mb-6 overflow-x-auto rounded-xl border border-slate-200 bg-white">
 
-            <div className="flex overflow-x-auto">
+          <div className="flex min-w-max">
 
-              {tabs.map((tab) => {
-
+            {tabs.map(
+              (tab) => {
                 const Icon =
                   tab.icon;
 
-                return (
+                const active =
+                  activeTab ===
+                  tab.id;
 
+                return (
                   <button
                     key={tab.id}
                     onClick={() =>
@@ -1532,373 +1423,426 @@ export default function MeetingDetails() {
                         tab.id
                       )
                     }
-                    className={`
-                      flex
-                      items-center
-                      gap-2
-                      whitespace-nowrap
-                      border-b-2
-                      px-5
-                      py-4
-                      text-sm
-                      font-medium
-                      transition
-                      ${
-                        activeTab ===
-                        tab.id
-                          ? "border-blue-600 text-blue-600"
-                          : "border-transparent text-slate-500 hover:text-slate-900"
-                      }
-                    `}
+                    className={`flex items-center gap-2 border-b-2 px-5 py-4 text-sm font-medium transition ${
+                      active
+                        ? "border-slate-900 text-slate-900"
+                        : "border-transparent text-slate-500 hover:text-slate-800"
+                    }`}
                   >
-
-                    <Icon size={16} />
+                    <Icon
+                      size={17}
+                    />
 
                     {tab.label}
-
                   </button>
-
                 );
-
-              })}
-
-            </div>
+              }
+            )}
 
           </div>
 
+        </div>
 
-          {/* ====================================== */}
-          {/* TAB CONTENT */}
-          {/* ====================================== */}
+        {/* ===================================================
+            OVERVIEW
+        ==================================================== */}
 
-          <div className="p-6">
+        {activeTab ===
+          "overview" && (
+          <div className="space-y-6">
 
+            {/* KPI */}
 
-            {/* ================================== */}
-            {/* OVERVIEW */}
-            {/* ================================== */}
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
 
-            {activeTab ===
-              "overview" && (
+              <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
 
-              <div className="space-y-6">
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                  Words
+                </p>
 
+                <p className="mt-2 text-2xl font-bold text-slate-900">
+                  {meeting.total_words ||
+                    0}
+                </p>
 
-                {/* KPI CARDS */}
+              </div>
 
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
 
-                  <div className="rounded-xl border border-slate-200 p-5">
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                  Speakers
+                </p>
 
-                    <p className="text-sm text-slate-500">
-                      Words
-                    </p>
+                <p className="mt-2 text-2xl font-bold text-slate-900">
+                  {meeting.speaker_count ||
+                    0}
+                </p>
 
-                    <p className="mt-2 text-2xl font-bold text-slate-900">
-                      {meeting.total_words ||
-                        0}
-                    </p>
+              </div>
 
+              <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                  Action Items
+                </p>
+
+                <p className="mt-2 text-2xl font-bold text-slate-900">
+                  {
+                    actionStats.total
+                  }
+                </p>
+
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                  Effectiveness
+                </p>
+
+                <p className="mt-2 text-2xl font-bold text-slate-900">
+                  {score ??
+                    "—"}
+                  {score !==
+                    null &&
+                    score !==
+                      undefined &&
+                    "/100"}
+                </p>
+
+              </div>
+
+            </div>
+
+            {/* SUMMARY */}
+
+            <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+
+              <div className="flex items-center gap-2">
+
+                <Sparkles
+                  size={20}
+                  className="text-slate-700"
+                />
+
+                <h2 className="text-lg font-semibold text-slate-900">
+                  Executive Summary
+                </h2>
+
+              </div>
+
+              <p className="mt-4 whitespace-pre-wrap text-sm leading-7 text-slate-600">
+                {meeting.summary ||
+                  "No summary available yet."}
+              </p>
+
+            </section>
+
+            {/* KEY POINTS + DECISIONS */}
+
+            <div className="grid gap-6 lg:grid-cols-2">
+
+              <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+
+                <h2 className="text-lg font-semibold text-slate-900">
+                  Key Points
+                </h2>
+
+                {keyPoints.length >
+                0 ? (
+                  <ul className="mt-4 space-y-3">
+
+                    {keyPoints.map(
+                      (
+                        point,
+                        index
+                      ) => (
+                        <li
+                          key={index}
+                          className="flex gap-3 text-sm leading-6 text-slate-600"
+                        >
+                          <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-slate-500" />
+
+                          <span>
+                            {point}
+                          </span>
+                        </li>
+                      )
+                    )}
+
+                  </ul>
+                ) : (
+                  <p className="mt-4 text-sm text-slate-500">
+                    No key points available.
+                  </p>
+                )}
+
+              </section>
+
+              <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+
+                <h2 className="text-lg font-semibold text-slate-900">
+                  Decisions
+                </h2>
+
+                {decisions.length >
+                0 ? (
+                  <ul className="mt-4 space-y-3">
+
+                    {decisions.map(
+                      (
+                        decision,
+                        index
+                      ) => (
+                        <li
+                          key={index}
+                          className="flex gap-3 text-sm leading-6 text-slate-600"
+                        >
+                          <CheckCircle2
+                            size={17}
+                            className="mt-1 shrink-0 text-green-600"
+                          />
+
+                          <span>
+                            {decision}
+                          </span>
+                        </li>
+                      )
+                    )}
+
+                  </ul>
+                ) : (
+                  <p className="mt-4 text-sm text-slate-500">
+                    No decisions available.
+                  </p>
+                )}
+
+              </section>
+
+            </div>
+
+            {/* EFFECTIVENESS */}
+
+            <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+
+              <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
+
+                <div>
+
+                  <p className="text-sm font-medium text-slate-500">
+                    Meeting Effectiveness
+                  </p>
+
+                  <p className="mt-1 text-sm text-slate-400">
+                    AI-generated meeting performance score
+                  </p>
+
+                </div>
+
+                <div className="flex items-center gap-4">
+
+                  <div className="text-4xl font-bold text-slate-900">
+                    {score ??
+                      "—"}
                   </div>
 
+                  {meeting.effectiveness_rating && (
+                    <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-medium text-slate-700">
+                      {
+                        meeting.effectiveness_rating
+                      }
+                    </span>
+                  )}
 
-                  <div className="rounded-xl border border-slate-200 p-5">
+                </div>
 
-                    <p className="text-sm text-slate-500">
-                      Speakers
-                    </p>
+              </div>
 
-                    <p className="mt-2 text-2xl font-bold text-slate-900">
-                      {meeting.speaker_count ||
-                        0}
-                    </p>
+              {Object.keys(
+                scoreBreakdown
+              ).length >
+                0 && (
+                <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
 
+                  {Object.entries(
+                    scoreBreakdown
+                  ).map(
+                    (
+                      [
+                        key,
+                        value
+                      ]
+                    ) => (
+                      <div
+                        key={key}
+                        className="rounded-lg bg-slate-50 p-4"
+                      >
+
+                        <p className="text-xs capitalize text-slate-500">
+                          {key.replace(
+                            /_/g,
+                            " "
+                          )}
+                        </p>
+
+                        <p className="mt-2 text-xl font-bold text-slate-900">
+                          {value}
+                        </p>
+
+                      </div>
+                    )
+                  )}
+
+                </div>
+              )}
+
+            </section>
+
+          </div>
+        )}
+
+        {/* ===================================================
+            TRANSCRIPT
+        ==================================================== */}
+
+        {activeTab ===
+          "transcript" && (
+          <div className="space-y-6">
+
+            {/* AUDIO */}
+
+            <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+
+              <div className="flex items-center justify-between">
+
+                <div className="flex items-center gap-3">
+
+                  <div className="rounded-lg bg-slate-100 p-3">
+                    <Volume2
+                      size={20}
+                      className="text-slate-700"
+                    />
                   </div>
 
+                  <div>
 
-                  <div className="rounded-xl border border-slate-200 p-5">
+                    <h2 className="font-semibold text-slate-900">
+                      Meeting Audio
+                    </h2>
 
-                    <p className="text-sm text-slate-500">
-                      Action Items
-                    </p>
-
-                    <p className="mt-2 text-2xl font-bold text-slate-900">
-                      {actionItems.length}
-                    </p>
-
-                  </div>
-
-
-                  <div className="rounded-xl border border-slate-200 p-5">
-
-                    <p className="text-sm text-slate-500">
-                      Effectiveness
-                    </p>
-
-                    <p className="mt-2 text-2xl font-bold text-blue-600">
-                      {effectivenessScore ??
-                        "-"}
-                      {effectivenessScore !==
-                        null &&
-                        "/100"}
+                    <p className="text-xs text-slate-500">
+                      Click transcript timestamps to jump.
                     </p>
 
                   </div>
 
                 </div>
 
-
-                {/* SUMMARY */}
-
-                <section>
-
-                  <h3 className="text-lg font-semibold text-slate-900">
-                    Executive Summary
-                  </h3>
-
-                  <div className="mt-3 rounded-xl bg-slate-50 p-5">
-
-                    <p className="leading-7 text-slate-700">
-                      {meeting.summary ||
-                        "No summary available yet."}
-                    </p>
-
-                  </div>
-
-                </section>
-
-
-                {/* KEY POINTS */}
-
-                <section>
-
-                  <h3 className="text-lg font-semibold text-slate-900">
-                    Key Points
-                  </h3>
-
-                  {keyPoints.length >
-                  0 ? (
-
-                    <ul className="mt-3 space-y-3">
-
-                      {keyPoints.map(
-                        (
-                          point,
-                          index
-                        ) => (
-
-                          <li
-                            key={index}
-                            className="flex gap-3 rounded-lg border border-slate-200 p-4"
-                          >
-
-                            <CheckCircle
-                              size={18}
-                              className="mt-0.5 shrink-0 text-green-600"
-                            />
-
-                            <span className="text-sm leading-6 text-slate-700">
-                              {point}
-                            </span>
-
-                          </li>
-
-                        )
-                      )}
-
-                    </ul>
-
-                  ) : (
-
-                    <p className="mt-3 text-sm text-slate-500">
-                      No key points available.
-                    </p>
-
-                  )}
-
-                </section>
-
-
-                {/* DECISIONS */}
-
-                <section>
-
-                  <h3 className="text-lg font-semibold text-slate-900">
-                    Decisions
-                  </h3>
-
-                  {decisions.length >
-                  0 ? (
-
-                    <ul className="mt-3 space-y-3">
-
-                      {decisions.map(
-                        (
-                          decision,
-                          index
-                        ) => (
-
-                          <li
-                            key={index}
-                            className="rounded-lg border border-slate-200 p-4 text-sm leading-6 text-slate-700"
-                          >
-                            {decision}
-                          </li>
-
-                        )
-                      )}
-
-                    </ul>
-
-                  ) : (
-
-                    <p className="mt-3 text-sm text-slate-500">
-                      No decisions recorded.
-                    </p>
-
-                  )}
-
-                </section>
-
-
-                {/* SCORE */}
-
-                <section>
-
-                  <h3 className="text-lg font-semibold text-slate-900">
-                    Meeting Effectiveness
-                  </h3>
-
-                  <div className="mt-4 rounded-xl border border-slate-200 p-6">
-
-                    <div className="flex flex-col gap-5 sm:flex-row sm:items-center">
-
-                      <div className="flex h-28 w-28 shrink-0 items-center justify-center rounded-full border-8 border-blue-100">
-
-                        <div className="text-center">
-
-                          <p className="text-2xl font-bold text-blue-600">
-                            {effectivenessScore ??
-                              "-"}
-                          </p>
-
-                          <p className="text-xs text-slate-500">
-                            / 100
-                          </p>
-
-                        </div>
-
-                      </div>
-
-
-                      <div>
-
-                        <h4 className="text-lg font-semibold text-slate-900">
-                          {effectivenessRating ||
-                            "Not calculated"}
-                        </h4>
-
-                        <p className="mt-1 text-sm text-slate-500">
-                          Based on participation,
-                          sentiment, action items,
-                          transcript quality and
-                          meeting efficiency.
-                        </p>
-
-                      </div>
-
-                    </div>
-
-
-                    {scoreBreakdown && (
-
-                      <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-
-                        {Object.entries(
-                          scoreBreakdown
-                        ).map(
-                          ([
-                            key,
-                            value
-                          ]) => (
-
-                            <div
-                              key={key}
-                              className="rounded-lg bg-slate-50 p-4"
-                            >
-
-                              <p className="text-xs capitalize text-slate-500">
-                                {key.replaceAll(
-                                  "_",
-                                  " "
-                                )}
-                              </p>
-
-                              <p className="mt-1 text-lg font-bold text-slate-800">
-                                {value}
-                              </p>
-
-                            </div>
-
-                          )
-                        )}
-
-                      </div>
-
-                    )}
-
-                  </div>
-
-                </section>
+                {audioLoading && (
+                  <LoaderCircle
+                    size={18}
+                    className="animate-spin text-slate-500"
+                  />
+                )}
 
               </div>
 
-            )}
+              {audioUrl ? (
+                <div className="mt-5">
 
+                  <audio
+                    ref={audioRef}
+                    src={audioUrl}
+                    onTimeUpdate={
+                      handleAudioTimeUpdate
+                    }
+                    onLoadedMetadata={
+                      handleAudioLoaded
+                    }
+                    onPlay={() =>
+                      setIsPlaying(
+                        true
+                      )
+                    }
+                    onPause={() =>
+                      setIsPlaying(
+                        false
+                      )
+                    }
+                    className="hidden"
+                  />
 
-            {/* ================================== */}
-            {/* TRANSCRIPT */}
-            {/* ================================== */}
+                  <div className="flex items-center gap-4">
 
-            {activeTab ===
-              "transcript" && (
-
-              <div className="space-y-6">
-
-
-                {/* AUDIO */}
-
-                <section>
-
-                  <div className="mb-4">
-
-                    <h3 className="text-lg font-semibold text-slate-900">
-                      Meeting Audio
-                    </h3>
-
-                    <p className="text-sm text-slate-500">
-                      Listen and jump directly to transcript timestamps.
-                    </p>
-
-                  </div>
-
-
-                  {audioUrl ? (
-
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
-
-                      <div className="mb-3 flex items-center gap-2">
-
-                        <Volume2
+                    <button
+                      onClick={
+                        toggleAudio
+                      }
+                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-slate-900 text-white hover:bg-slate-700"
+                    >
+                      {isPlaying ? (
+                        <Pause
                           size={18}
-                          className="text-slate-600"
                         />
+                      ) : (
+                        <Play
+                          size={18}
+                          className="ml-0.5"
+                        />
+                      )}
+                    </button>
 
-                        <span className="text-sm font-medium text-slate-700">
+                    <div className="flex-1">
+
+                      <input
+                        type="range"
+                        min="0"
+                        max={
+                          audioDuration ||
+                          0
+                        }
+                        step="0.1"
+                        value={
+                          Math.min(
+                            audioCurrentTime,
+                            audioDuration ||
+                              0
+                          )
+                        }
+                        onChange={(
+                          event
+                        ) => {
+                          const value =
+                            Number(
+                              event
+                                .target
+                                .value
+                            );
+
+                          if (
+                            audioRef.current
+                          ) {
+                            audioRef.current.currentTime =
+                              value;
+                          }
+
+                          setAudioCurrentTime(
+                            value
+                          );
+                        }}
+                        className="w-full"
+                      />
+
+                      <div className="mt-1 flex justify-between text-xs text-slate-400">
+
+                        <span>
                           {formatTimestamp(
                             audioCurrentTime
-                          )}{" "}
-                          /{" "}
+                          )}
+                        </span>
+
+                        <span>
                           {formatTimestamp(
                             audioDuration
                           )}
@@ -1906,187 +1850,537 @@ export default function MeetingDetails() {
 
                       </div>
 
-
-                      <audio
-                        ref={audioRef}
-                        src={audioUrl}
-                        controls
-                        className="w-full"
-                        onTimeUpdate={
-                          handleAudioTimeUpdate
-                        }
-                        onLoadedMetadata={
-                          handleAudioLoaded
-                        }
-                      />
-
                     </div>
-
-                  ) : (
-
-                    <div className="rounded-xl border border-slate-200 p-5 text-sm text-slate-500">
-                      Audio is not available.
-                    </div>
-
-                  )}
-
-                </section>
-
-
-                {/* TRANSCRIPT CONTROLS */}
-
-                <section>
-
-                  <div className="flex flex-col gap-3 md:flex-row">
-
-                    <div className="relative flex-1">
-
-                      <Search
-                        size={17}
-                        className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
-                      />
-
-                      <input
-                        value={
-                          transcriptSearch
-                        }
-                        onChange={(event) =>
-                          setTranscriptSearch(
-                            event.target.value
-                          )
-                        }
-                        placeholder="Search transcript..."
-                        className="w-full rounded-lg border border-slate-200 py-2.5 pl-10 pr-4 text-sm outline-none focus:border-blue-500"
-                      />
-
-                    </div>
-
-
-                    <select
-                      value={
-                        speakerFilter
-                      }
-                      onChange={(event) =>
-                        setSpeakerFilter(
-                          event.target.value
-                        )
-                      }
-                      className="rounded-lg border border-slate-200 px-4 py-2.5 text-sm outline-none"
-                    >
-
-                      <option value="all">
-                        All Speakers
-                      </option>
-
-                      {speakers.map(
-                        (speaker) => (
-
-                          <option
-                            key={speaker}
-                            value={speaker}
-                          >
-                            {speaker}
-                          </option>
-
-                        )
-                      )}
-
-                    </select>
 
                   </div>
 
-                </section>
+                </div>
+              ) : (
+                <p className="mt-5 text-sm text-slate-500">
+                  Audio is not available.
+                </p>
+              )}
 
+            </section>
 
-                {/* TRANSCRIPT */}
+            {/* TRANSCRIPT */}
 
-                <section>
+            <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
 
-                  {!transcriptSegments.length ? (
+              <div className="border-b p-5">
 
-                    <div className="rounded-xl border border-slate-200 p-8 text-center">
+                <div className="flex flex-col gap-3 md:flex-row">
 
-                      <MessageSquareText
-                        size={35}
-                        className="mx-auto text-slate-400"
-                      />
+                  <div className="relative flex-1">
 
-                      <p className="mt-3 text-sm text-slate-500">
-                        Transcript is not available yet.
-                      </p>
+                    <Search
+                      size={17}
+                      className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+                    />
 
-                    </div>
+                    <input
+                      value={
+                        transcriptSearch
+                      }
+                      onChange={(
+                        event
+                      ) =>
+                        setTranscriptSearch(
+                          event
+                            .target
+                            .value
+                        )
+                      }
+                      placeholder="Search transcript..."
+                      className="w-full rounded-lg border border-slate-200 py-2.5 pl-10 pr-4 text-sm outline-none focus:border-slate-400"
+                    />
 
-                  ) : (
+                  </div>
 
-                    <div className="max-h-[650px] space-y-2 overflow-y-auto rounded-xl border border-slate-200 p-3">
+                  <select
+                    value={
+                      speakerFilter
+                    }
+                    onChange={(
+                      event
+                    ) =>
+                      setSpeakerFilter(
+                        event
+                          .target
+                          .value
+                      )
+                    }
+                    className="rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-700 outline-none"
+                  >
+                    <option value="all">
+                      All speakers
+                    </option>
 
-                      {filteredTranscript.map(
+                    {speakers.map(
+                      (
+                        speaker
+                      ) => (
+                        <option
+                          key={
+                            speaker
+                          }
+                          value={
+                            speaker
+                          }
+                        >
+                          {speaker}
+                        </option>
+                      )
+                    )}
+
+                  </select>
+
+                </div>
+
+              </div>
+
+              <div className="max-h-[650px] overflow-y-auto p-5">
+
+                {filteredTranscript.length >
+                0 ? (
+                  <div className="space-y-3">
+
+                    {filteredTranscript.map(
+                      (
+                        segment
+                      ) => {
+
+                        const active =
+                          segment.originalIndex ===
+                          activeSegmentIndex;
+
+                        return (
+                          <div
+                            key={`${segment.originalIndex}-${segment.start}`}
+                            ref={(
+                              element
+                            ) => {
+                              transcriptRefs.current[
+                                segment.originalIndex
+                              ] =
+                                element;
+                            }}
+                            className={`rounded-lg border p-4 transition ${
+                              active
+                                ? "border-slate-400 bg-slate-100 shadow-sm"
+                                : "border-transparent hover:border-slate-200 hover:bg-slate-50"
+                            }`}
+                          >
+
+                            <div className="flex items-start gap-3">
+
+                              <button
+                                onClick={() =>
+                                  jumpToTimestamp(
+                                    segment.start
+                                  )
+                                }
+                                className="mt-0.5 shrink-0 rounded-md bg-slate-100 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-200"
+                              >
+                                {formatTimestamp(
+                                  segment.start
+                                )}
+                              </button>
+
+                              <div className="min-w-0">
+
+                                <div className="mb-1 flex items-center gap-2">
+
+                                  <span className="text-xs font-semibold text-slate-700">
+                                    {segment.speaker ||
+                                      "Unknown speaker"}
+                                  </span>
+
+                                  {active && (
+                                    <span className="rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-medium text-white">
+                                      Playing
+                                    </span>
+                                  )}
+
+                                </div>
+
+                                <p className="text-sm leading-6 text-slate-700">
+                                  {
+                                    segment.text
+                                  }
+                                </p>
+
+                              </div>
+
+                            </div>
+
+                          </div>
+                        );
+                      }
+                    )}
+
+                  </div>
+                ) : (
+                  <div className="py-12 text-center">
+
+                    <FileText
+                      size={32}
+                      className="mx-auto text-slate-300"
+                    />
+
+                    <p className="mt-3 text-sm text-slate-500">
+                      No transcript segments found.
+                    </p>
+
+                  </div>
+                )}
+
+              </div>
+
+            </section>
+
+          </div>
+        )}
+
+        {/* ===================================================
+            SPEAKERS
+        ==================================================== */}
+
+        {activeTab ===
+          "speakers" && (
+          <div className="space-y-6">
+
+            <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+
+              <div className="flex items-center gap-3">
+
+                <div className="rounded-lg bg-slate-100 p-3">
+                  <Users
+                    size={20}
+                    className="text-slate-700"
+                  />
+                </div>
+
+                <div>
+
+                  <h2 className="text-lg font-semibold text-slate-900">
+                    Speaker Intelligence
+                  </h2>
+
+                  <p className="text-sm text-slate-500">
+                    Participation and speaking patterns.
+                  </p>
+
+                </div>
+
+              </div>
+
+              {speakerAnalytics.length >
+              0 ? (
+                <div className="mt-6 overflow-x-auto">
+
+                  <table className="w-full min-w-[600px] text-left">
+
+                    <thead>
+
+                      <tr className="border-b text-xs uppercase tracking-wide text-slate-500">
+
+                        <th className="px-4 py-3">
+                          Speaker
+                        </th>
+
+                        <th className="px-4 py-3">
+                          Speaking Time
+                        </th>
+
+                        <th className="px-4 py-3">
+                          Words
+                        </th>
+
+                        <th className="px-4 py-3">
+                          Participation
+                        </th>
+
+                      </tr>
+
+                    </thead>
+
+                    <tbody>
+
+                      {speakerAnalytics.map(
                         (
-                          segment
+                          speaker,
+                          index
                         ) => {
 
-                          const originalIndex =
-                            transcriptSegments.indexOf(
-                              segment
+                          const totalTime =
+                            speakerAnalytics.reduce(
+                              (
+                                sum,
+                                item
+                              ) =>
+                                sum +
+                                Number(
+                                  item.speaking_time ||
+                                    0
+                                ),
+                              0
                             );
 
-                          const isActive =
-                            originalIndex ===
-                            activeSegmentIndex;
+                          const percentage =
+                            totalTime >
+                            0
+                              ? (
+                                  Number(
+                                    speaker.speaking_time ||
+                                      0
+                                  ) /
+                                  totalTime
+                                ) *
+                                100
+                              : 0;
 
                           return (
-
-                            <div
-                              key={`${segment.start}-${originalIndex}`}
-                              ref={(element) => {
-                                transcriptRefs.current[
-                                  originalIndex
-                                ] =
-                                  element;
-                              }}
-                              className={`
-                                rounded-lg
-                                border
-                                p-4
-                                transition
-                                ${
-                                  isActive
-                                    ? "border-blue-300 bg-blue-50"
-                                    : "border-transparent hover:border-slate-200 hover:bg-slate-50"
-                                }
-                              `}
+                            <tr
+                              key={
+                                speaker.id ||
+                                index
+                              }
+                              className="border-b last:border-0"
                             >
 
-                              <div className="flex items-start gap-3">
+                              <td className="px-4 py-4 font-medium text-slate-800">
+                                {
+                                  speaker.speaker
+                                }
+                              </td>
 
-                                <button
-                                  onClick={() =>
-                                    jumpToTimestamp(
-                                      segment.start
-                                    )
+                              <td className="px-4 py-4 text-sm text-slate-600">
+                                {formatDuration(
+                                  speaker.speaking_time
+                                )}
+                              </td>
+
+                              <td className="px-4 py-4 text-sm text-slate-600">
+                                {
+                                  speaker.word_count ||
+                                  0
+                                }
+                              </td>
+
+                              <td className="px-4 py-4">
+
+                                <div className="flex items-center gap-3">
+
+                                  <div className="h-2 w-32 overflow-hidden rounded-full bg-slate-100">
+
+                                    <div
+                                      className="h-full rounded-full bg-slate-700"
+                                      style={{
+                                        width: `${Math.min(
+                                          percentage,
+                                          100
+                                        )}%`
+                                      }}
+                                    />
+
+                                  </div>
+
+                                  <span className="text-xs text-slate-500">
+                                    {percentage.toFixed(
+                                      0
+                                    )}
+                                    %
+                                  </span>
+
+                                </div>
+
+                              </td>
+
+                            </tr>
+                          );
+                        }
+                      )}
+
+                    </tbody>
+
+                  </table>
+
+                </div>
+              ) : (
+                <div className="py-12 text-center">
+
+                  <Users
+                    size={32}
+                    className="mx-auto text-slate-300"
+                  />
+
+                  <p className="mt-3 text-sm text-slate-500">
+                    Speaker analytics are not available yet.
+                  </p>
+
+                </div>
+              )}
+
+            </section>
+
+          </div>
+        )}
+
+        {/* ===================================================
+            ACTION ITEMS
+        ==================================================== */}
+
+        {activeTab ===
+          "actions" && (
+          <div className="space-y-6">
+
+            <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+
+              {[
+                [
+                  "Total",
+                  actionStats.total
+                ],
+                [
+                  "Pending",
+                  actionStats.pending
+                ],
+                [
+                  "In Progress",
+                  actionStats.inProgress
+                ],
+                [
+                  "Completed",
+                  actionStats.completed
+                ],
+                [
+                  "Overdue",
+                  actionStats.overdue
+                ]
+              ].map(
+                (
+                  [label, value]
+                ) => (
+                  <div
+                    key={label}
+                    className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"
+                  >
+
+                    <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                      {label}
+                    </p>
+
+                    <p className="mt-2 text-2xl font-bold text-slate-900">
+                      {value}
+                    </p>
+
+                  </div>
+                )
+              )}
+
+            </section>
+
+            <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
+
+              <div className="flex flex-wrap gap-2 border-b p-5">
+
+                {[
+                  ["all", "All"],
+                  ["pending", "Pending"],
+                  [
+                    "in_progress",
+                    "In Progress"
+                  ],
+                  [
+                    "completed",
+                    "Completed"
+                  ],
+                  [
+                    "overdue",
+                    "Overdue"
+                  ]
+                ].map(
+                  (
+                    [
+                      value,
+                      label
+                    ]
+                  ) => (
+                    <button
+                      key={value}
+                      onClick={() =>
+                        setActionFilter(
+                          value
+                        )
+                      }
+                      className={`rounded-lg px-3 py-2 text-sm font-medium ${
+                        actionFilter ===
+                        value
+                          ? "bg-slate-900 text-white"
+                          : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  )
+                )}
+
+              </div>
+
+              <div className="divide-y">
+
+                {filteredActionItems.length >
+                0 ? (
+                  filteredActionItems.map(
+                    (item) => (
+                      <div
+                        key={item.id}
+                        className="p-5"
+                      >
+
+                        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+
+                          <div className="min-w-0">
+
+                            <div className="flex items-start gap-3">
+
+                              <div className="mt-0.5 rounded-lg bg-slate-100 p-2">
+
+                                <ListChecks
+                                  size={17}
+                                  className="text-slate-600"
+                                />
+
+                              </div>
+
+                              <div>
+
+                                <p className="font-medium text-slate-900">
+                                  {
+                                    item.task
                                   }
-                                  className="mt-0.5 shrink-0 rounded-md bg-slate-100 px-2 py-1 font-mono text-xs text-slate-600 hover:bg-blue-100 hover:text-blue-700"
-                                >
-                                  {formatTimestamp(
-                                    segment.start
-                                  )}
-                                </button>
+                                </p>
 
+                                <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
 
-                                <div className="min-w-0 flex-1">
-
-                                  {segment.speaker && (
-
-                                    <p className="mb-1 text-xs font-semibold text-blue-600">
-                                      {segment.speaker}
-                                    </p>
-
+                                  {item.assigned_to && (
+                                    <span>
+                                      Assigned to:{" "}
+                                      {
+                                        item.assigned_to
+                                      }
+                                    </span>
                                   )}
 
-                                  <p className="text-sm leading-6 text-slate-700">
-                                    {segment.text}
-                                  </p>
+                                  {item.deadline && (
+                                    <span>
+                                      Deadline:{" "}
+                                      {
+                                        item.deadline
+                                      }
+                                    </span>
+                                  )}
 
                                 </div>
 
@@ -2094,304 +2388,78 @@ export default function MeetingDetails() {
 
                             </div>
 
-                          );
-
-                        }
-                      )}
-
-                    </div>
-
-                  )}
-
-                </section>
-
-              </div>
-
-            )}
-
-
-            {/* ================================== */}
-            {/* SPEAKERS */}
-            {/* ================================== */}
-
-            {activeTab ===
-              "speakers" && (
-
-              <div className="space-y-6">
-
-                <div>
-
-                  <h3 className="text-lg font-semibold text-slate-900">
-                    Speaker Intelligence
-                  </h3>
-
-                  <p className="mt-1 text-sm text-slate-500">
-                    Participation and speaking patterns detected in the meeting.
-                  </p>
-
-                </div>
-
-
-                {speakerAnalytics.length ===
-                0 ? (
-
-                  <div className="rounded-xl border border-slate-200 p-8 text-center">
-
-                    <Users
-                      size={36}
-                      className="mx-auto text-slate-400"
-                    />
-
-                    <p className="mt-3 text-sm text-slate-500">
-                      Speaker analytics are not available yet.
-                    </p>
-
-                  </div>
-
-                ) : (
-
-                  <div className="grid gap-4 md:grid-cols-2">
-
-                    {speakerAnalytics.map(
-                      (
-                        speaker,
-                        index
-                      ) => (
-
-                        <div
-                          key={
-                            speaker.id ||
-                            index
-                          }
-                          className="rounded-xl border border-slate-200 p-5"
-                        >
-
-                          <div className="flex items-center justify-between">
-
-                            <div className="flex items-center gap-3">
-
-                              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 font-semibold text-slate-700">
-                                {String(
-                                  speaker.speaker ||
-                                    "S"
-                                ).slice(0, 1)}
-                              </div>
-
-                              <div>
-
-                                <p className="font-semibold text-slate-900">
-                                  {speaker.speaker ||
-                                    "Unknown Speaker"}
-                                </p>
-
-                                <p className="text-xs text-slate-500">
-                                  Speaker{" "}
-                                  {index + 1}
-                                </p>
-
-                              </div>
-
-                            </div>
-
                           </div>
 
+                          <div className="flex flex-wrap items-center gap-2">
 
-                          <div className="mt-5 grid grid-cols-2 gap-3">
+                            <span
+                              className={`rounded-full px-2.5 py-1 text-xs font-medium ${getPriorityStyle(
+                                item.priority
+                              )}`}
+                            >
+                              {item.priority ||
+                                "medium"}
+                            </span>
 
-                            <div className="rounded-lg bg-slate-50 p-3">
+                            {isOverdue(
+                              item
+                            ) && (
+                              <span className="rounded-full bg-red-100 px-2.5 py-1 text-xs font-medium text-red-700">
+                                Overdue
+                              </span>
+                            )}
 
-                              <p className="text-xs text-slate-500">
-                                Speaking Time
-                              </p>
+                            <select
+                              value={
+                                item.status ||
+                                "pending"
+                              }
+                              disabled={
+                                actionUpdating ===
+                                item.id
+                              }
+                              onChange={(
+                                event
+                              ) =>
+                                updateActionItem(
+                                  item.id,
+                                  {
+                                    status:
+                                      event
+                                        .target
+                                        .value
+                                  }
+                                )
+                              }
+                              className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs outline-none"
+                            >
+                              <option value="pending">
+                                Pending
+                              </option>
 
-                              <p className="mt-1 font-semibold text-slate-800">
-                                {formatDuration(
-                                  speaker.speaking_time
-                                )}
-                              </p>
+                              <option value="in_progress">
+                                In Progress
+                              </option>
 
-                            </div>
+                              <option value="completed">
+                                Completed
+                              </option>
 
-
-                            <div className="rounded-lg bg-slate-50 p-3">
-
-                              <p className="text-xs text-slate-500">
-                                Words
-                              </p>
-
-                              <p className="mt-1 font-semibold text-slate-800">
-                                {speaker.word_count ||
-                                  0}
-                              </p>
-
-                            </div>
+                            </select>
 
                           </div>
 
                         </div>
 
-                      )
-                    )}
-
-                  </div>
-
-                )}
-
-              </div>
-
-            )}
-
-
-            {/* ================================== */}
-            {/* ACTION ITEMS */}
-            {/* ================================== */}
-
-            {activeTab ===
-              "actions" && (
-
-              <div className="space-y-6">
-
-                <div>
-
-                  <h3 className="text-lg font-semibold text-slate-900">
-                    Action Items
-                  </h3>
-
-                  <p className="mt-1 text-sm text-slate-500">
-                    Tasks identified from the meeting.
-                  </p>
-
-                </div>
-
-
-                {/* ACTION STATS */}
-
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-
-                  <div className="rounded-xl border border-slate-200 p-4">
-
-                    <p className="text-xs text-slate-500">
-                      Total
-                    </p>
-
-                    <p className="mt-1 text-2xl font-bold">
-                      {actionItems.length}
-                    </p>
-
-                  </div>
-
-
-                  <div className="rounded-xl border border-slate-200 p-4">
-
-                    <p className="text-xs text-slate-500">
-                      Pending
-                    </p>
-
-                    <p className="mt-1 text-2xl font-bold text-yellow-600">
-                      {pendingCount}
-                    </p>
-
-                  </div>
-
-
-                  <div className="rounded-xl border border-slate-200 p-4">
-
-                    <p className="text-xs text-slate-500">
-                      In Progress
-                    </p>
-
-                    <p className="mt-1 text-2xl font-bold text-blue-600">
-                      {inProgressCount}
-                    </p>
-
-                  </div>
-
-
-                  <div className="rounded-xl border border-slate-200 p-4">
-
-                    <p className="text-xs text-slate-500">
-                      Completed
-                    </p>
-
-                    <p className="mt-1 text-2xl font-bold text-green-600">
-                      {completedActionCount}
-                    </p>
-
-                  </div>
-
-                </div>
-
-
-                {/* FILTER */}
-
-                <div className="flex flex-wrap gap-2">
-
-                  {[
-                    "all",
-                    "pending",
-                    "in_progress",
-                    "completed",
-                    "overdue"
-                  ].map(
-                    (filter) => (
-
-                      <button
-                        key={filter}
-                        onClick={() =>
-                          setActionFilter(
-                            filter
-                          )
-                        }
-                        className={`
-                          rounded-lg
-                          px-3
-                          py-2
-                          text-xs
-                          font-medium
-                          ${
-                            actionFilter ===
-                            filter
-                              ? "bg-slate-900 text-white"
-                              : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                          }
-                        `}
-                      >
-
-                        {filter ===
-                        "in_progress"
-                          ? "In Progress"
-                          : filter
-                              .charAt(0)
-                              .toUpperCase() +
-                            filter.slice(1)}
-
-                        {filter ===
-                          "overdue" &&
-                          overdueCount >
-                            0 && (
-                            <span className="ml-1">
-                              ({overdueCount})
-                            </span>
-                          )}
-
-                      </button>
-
+                      </div>
                     )
-                  )}
+                  )
+                ) : (
+                  <div className="py-14 text-center">
 
-                </div>
-
-
-                {/* ITEMS */}
-
-                {filteredActionItems.length ===
-                0 ? (
-
-                  <div className="rounded-xl border border-slate-200 p-8 text-center">
-
-                    <CheckCircle
-                      size={36}
-                      className="mx-auto text-slate-400"
+                    <CheckCircle2
+                      size={34}
+                      className="mx-auto text-slate-300"
                     />
 
                     <p className="mt-3 text-sm text-slate-500">
@@ -2399,620 +2467,560 @@ export default function MeetingDetails() {
                     </p>
 
                   </div>
-
-                ) : (
-
-                  <div className="space-y-3">
-
-                    {filteredActionItems.map(
-                      (item) => (
-
-                        <div
-                          key={item.id}
-                          className="rounded-xl border border-slate-200 p-5"
-                        >
-
-                          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-
-                            <div className="min-w-0 flex-1">
-
-                              <div className="flex items-start gap-3">
-
-                                <div
-                                  className={`
-                                    mt-1
-                                    h-2.5
-                                    w-2.5
-                                    shrink-0
-                                    rounded-full
-                                    ${
-                                      item.status ===
-                                      "completed"
-                                        ? "bg-green-500"
-                                        : isOverdue(
-                                            item
-                                          )
-                                        ? "bg-red-500"
-                                        : "bg-blue-500"
-                                    }
-                                  `}
-                                />
-
-                                <div>
-
-                                  <p className="font-medium leading-6 text-slate-900">
-                                    {item.task}
-                                  </p>
-
-                                  <div className="mt-2 flex flex-wrap gap-3 text-xs text-slate-500">
-
-                                    {item.assigned_to && (
-
-                                      <span>
-                                        Assigned to:{" "}
-                                        <strong>
-                                          {item.assigned_to}
-                                        </strong>
-                                      </span>
-
-                                    )}
-
-                                    {item.deadline && (
-
-                                      <span>
-                                        Deadline:{" "}
-                                        {item.deadline}
-                                      </span>
-
-                                    )}
-
-                                  </div>
-
-                                </div>
-
-                              </div>
-
-                            </div>
-
-
-                            <div className="flex flex-wrap items-center gap-2">
-
-                              <select
-                                value={
-                                  item.status ||
-                                  "pending"
-                                }
-                                disabled={
-                                  updatingAction ===
-                                  item.id
-                                }
-                                onChange={(
-                                  event
-                                ) =>
-                                  updateActionItem(
-                                    item,
-                                    {
-                                      status:
-                                        event
-                                          .target
-                                          .value
-                                    }
-                                  )
-                                }
-                                className="rounded-lg border border-slate-200 px-3 py-2 text-xs"
-                              >
-
-                                <option value="pending">
-                                  Pending
-                                </option>
-
-                                <option value="in_progress">
-                                  In Progress
-                                </option>
-
-                                <option value="completed">
-                                  Completed
-                                </option>
-
-                              </select>
-
-
-                              <select
-                                value={
-                                  item.priority ||
-                                  "medium"
-                                }
-                                disabled={
-                                  updatingAction ===
-                                  item.id
-                                }
-                                onChange={(
-                                  event
-                                ) =>
-                                  updateActionItem(
-                                    item,
-                                    {
-                                      priority:
-                                        event
-                                          .target
-                                          .value
-                                    }
-                                  )
-                                }
-                                className="rounded-lg border border-slate-200 px-3 py-2 text-xs"
-                              >
-
-                                <option value="low">
-                                  Low
-                                </option>
-
-                                <option value="medium">
-                                  Medium
-                                </option>
-
-                                <option value="high">
-                                  High
-                                </option>
-
-                              </select>
-
-                            </div>
-
-                          </div>
-
-                        </div>
-
-                      )
-                    )}
-
-                  </div>
-
                 )}
 
               </div>
 
-            )}
+            </section>
 
+          </div>
+        )}
 
-            {/* ================================== */}
-            {/* AI INSIGHTS */}
-            {/* ================================== */}
+        {/* ===================================================
+            AI INSIGHTS
+        ==================================================== */}
 
-            {activeTab ===
-              "ai" && (
+        {activeTab ===
+          "ai" && (
+          <div className="space-y-6">
 
-              <div className="space-y-6">
+            {/* COPILOT */}
+
+            <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+
+              <div className="flex items-start gap-3">
+
+                <div className="rounded-xl bg-slate-900 p-3 text-white">
+                  <Brain
+                    size={21}
+                  />
+                </div>
 
                 <div>
 
-                  <h3 className="text-lg font-semibold text-slate-900">
-                    AI Meeting Insights
-                  </h3>
+                  <h2 className="text-lg font-semibold text-slate-900">
+                    AI Meeting Copilot
+                  </h2>
 
                   <p className="mt-1 text-sm text-slate-500">
-                    AI-generated observations and recommendations based on this meeting.
+                    Ask questions grounded in this meeting.
                   </p>
 
                 </div>
 
+              </div>
 
-                {/* INSIGHTS */}
+              <div className="mt-5 flex flex-wrap gap-2">
 
-                <section>
+                {suggestedQuestions.map(
+                  (
+                    suggestion
+                  ) => (
+                    <button
+                      key={
+                        suggestion
+                      }
+                      type="button"
+                      onClick={() =>
+                        setCopilotQuestion(
+                          suggestion
+                        )
+                      }
+                      className="rounded-full border border-slate-200 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50"
+                    >
+                      {suggestion}
+                    </button>
+                  )
+                )}
 
-                  <div className="mb-3 flex items-center gap-2">
+              </div>
 
-                    <Sparkles
-                      size={18}
-                      className="text-blue-600"
+              <form
+                onSubmit={
+                  askCopilot
+                }
+                className="mt-4 flex gap-2"
+              >
+
+                <input
+                  value={
+                    copilotQuestion
+                  }
+                  onChange={(
+                    event
+                  ) =>
+                    setCopilotQuestion(
+                      event
+                        .target
+                        .value
+                    )
+                  }
+                  placeholder="Ask something about this meeting..."
+                  className="flex-1 rounded-lg border border-slate-200 px-4 py-3 text-sm outline-none focus:border-slate-400"
+                />
+
+                <button
+                  type="submit"
+                  disabled={
+                    copilotLoading ||
+                    !copilotQuestion.trim()
+                  }
+                  className="flex items-center gap-2 rounded-lg bg-slate-900 px-5 py-3 text-sm font-medium text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {copilotLoading ? (
+                    <LoaderCircle
+                      size={16}
+                      className="animate-spin"
                     />
+                  ) : (
+                    <Send
+                      size={16}
+                    />
+                  )}
 
-                    <h4 className="font-semibold text-slate-900">
-                      Insights
-                    </h4>
+                  Ask
+                </button>
 
-                  </div>
+              </form>
 
+              {copilotError && (
+                <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                  {copilotError}
+                </div>
+              )}
 
-                  {insights.length >
-                  0 ? (
+              {copilotAnswer && (
+                <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-5">
 
-                    <div className="grid gap-4 md:grid-cols-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    AI Answer
+                  </p>
 
-                      {insights.map(
-                        (
-                          insight,
-                          index
-                        ) => (
+                  <p className="mt-3 whitespace-pre-wrap text-sm leading-7 text-slate-800">
+                    {copilotAnswer}
+                  </p>
 
-                          <div
-                            key={index}
-                            className="rounded-xl border border-slate-200 p-5"
-                          >
+                  {/* SOURCES */}
 
-                            <div className="flex gap-3">
+                  {copilotSources.length >
+                    0 && (
+                    <div className="mt-6">
 
-                              <div className="rounded-lg bg-blue-50 p-2">
+                      <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        Sources from meeting
+                      </p>
 
-                                <Lightbulb
-                                  size={18}
-                                  className="text-blue-600"
-                                />
+                      <div className="space-y-2">
 
+                        {copilotSources.map(
+                          (
+                            source,
+                            index
+                          ) => (
+                            <button
+                              key={
+                                index
+                              }
+                              type="button"
+                              onClick={() =>
+                                jumpToTimestamp(
+                                  source.start
+                                )
+                              }
+                              className="flex w-full items-start gap-3 rounded-lg border border-slate-200 bg-white p-3 text-left transition hover:border-slate-400 hover:bg-slate-50"
+                            >
+
+                              <div className="shrink-0 rounded-md bg-slate-100 px-2 py-1 text-xs font-medium text-slate-600">
+                                {formatTimestamp(
+                                  source.start
+                                )}
                               </div>
 
-                              <div>
+                              <div className="min-w-0">
 
-                                <h5 className="font-semibold text-slate-900">
-                                  {insight.title ||
-                                    "Meeting Insight"}
-                                </h5>
+                                <p className="text-xs leading-5 text-slate-600">
+                                  {
+                                    source.text
+                                  }
+                                </p>
 
-                                <p className="mt-1 text-sm leading-6 text-slate-600">
-                                  {insight.description ||
-                                    insight.text ||
-                                    ""}
+                                <p className="mt-1 flex items-center gap-1 text-[11px] text-slate-400">
+                                  Jump to transcript
+                                  <ChevronRight
+                                    size={11}
+                                  />
                                 </p>
 
                               </div>
 
-                            </div>
+                            </button>
+                          )
+                        )}
 
-                          </div>
-
-                        )
-                      )}
+                      </div>
 
                     </div>
-
-                  ) : (
-
-                    <div className="rounded-xl border border-slate-200 p-6 text-sm text-slate-500">
-                      No AI insights available yet.
-                    </div>
-
                   )}
 
-                </section>
+                </div>
+              )}
 
+            </section>
 
-                {/* RECOMMENDATIONS */}
+            {/* INSIGHTS */}
 
-                <section>
+            <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
 
-                  <div className="mb-3 flex items-center gap-2">
+              <div className="flex items-center gap-3">
 
-                    <Target
-                      size={18}
-                      className="text-green-600"
-                    />
-
-                    <h4 className="font-semibold text-slate-900">
-                      Recommendations
-                    </h4>
-
-                  </div>
-
-
-                  {recommendations.length >
-                  0 ? (
-
-                    <div className="space-y-3">
-
-                      {recommendations.map(
-                        (
-                          recommendation,
-                          index
-                        ) => (
-
-                          <div
-                            key={index}
-                            className="flex gap-3 rounded-lg border border-slate-200 p-4"
-                          >
-
-                            <CheckCircle
-                              size={18}
-                              className="mt-0.5 shrink-0 text-green-600"
-                            />
-
-                            <p className="text-sm leading-6 text-slate-700">
-                              {recommendation}
-                            </p>
-
-                          </div>
-
-                        )
-                      )}
-
-                    </div>
-
-                  ) : (
-
-                    <div className="rounded-xl border border-slate-200 p-6 text-sm text-slate-500">
-                      No recommendations available yet.
-                    </div>
-
-                  )}
-
-                </section>
-
-              </div>
-
-            )}
-
-
-            {/* ================================== */}
-            {/* ANALYTICS */}
-            {/* ================================== */}
-
-            {activeTab ===
-              "analytics" && (
-
-              <div className="space-y-6">
+                <Sparkles
+                  size={20}
+                  className="text-slate-700"
+                />
 
                 <div>
 
-                  <h3 className="text-lg font-semibold text-slate-900">
-                    Meeting Analytics
-                  </h3>
+                  <h2 className="text-lg font-semibold text-slate-900">
+                    AI Insights
+                  </h2>
 
-                  <p className="mt-1 text-sm text-slate-500">
-                    Detailed performance and participation metrics.
+                  <p className="text-sm text-slate-500">
+                    Observations generated from the meeting.
                   </p>
 
                 </div>
 
+              </div>
 
-                {/* SENTIMENT */}
+              {insights.length >
+              0 ? (
+                <div className="mt-5 grid gap-4 md:grid-cols-2">
 
-                <section>
+                  {insights.map(
+                    (
+                      insight,
+                      index
+                    ) => (
+                      <div
+                        key={index}
+                        className={`rounded-xl border p-5 ${getInsightStyle(
+                          insight.type
+                        )}`}
+                      >
 
-                  <h4 className="font-semibold text-slate-900">
+                        <p className="font-semibold text-slate-900">
+                          {
+                            insight.title
+                          }
+                        </p>
+
+                        <p className="mt-2 text-sm leading-6 text-slate-600">
+                          {
+                            insight.description
+                          }
+                        </p>
+
+                      </div>
+                    )
+                  )}
+
+                </div>
+              ) : (
+                <p className="mt-5 text-sm text-slate-500">
+                  No AI insights available yet.
+                </p>
+              )}
+
+            </section>
+
+            {/* RECOMMENDATIONS */}
+
+            <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+
+              <h2 className="text-lg font-semibold text-slate-900">
+                AI Recommendations
+              </h2>
+
+              {recommendations.length >
+              0 ? (
+                <ol className="mt-5 space-y-3">
+
+                  {recommendations.map(
+                    (
+                      recommendation,
+                      index
+                    ) => (
+                      <li
+                        key={index}
+                        className="flex gap-3 rounded-lg bg-slate-50 p-4"
+                      >
+
+                        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-900 text-xs font-semibold text-white">
+                          {index +
+                            1}
+                        </span>
+
+                        <span className="text-sm leading-6 text-slate-700">
+                          {
+                            recommendation
+                          }
+                        </span>
+
+                      </li>
+                    )
+                  )}
+
+                </ol>
+              ) : (
+                <p className="mt-4 text-sm text-slate-500">
+                  No recommendations available yet.
+                </p>
+              )}
+
+            </section>
+
+          </div>
+        )}
+
+        {/* ===================================================
+            ANALYTICS
+        ==================================================== */}
+
+        {activeTab ===
+          "analytics" && (
+          <div className="space-y-6">
+
+            {/* SENTIMENT */}
+
+            <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+
+              <div className="flex items-center gap-3">
+
+                <MessageSquare
+                  size={20}
+                  className="text-slate-700"
+                />
+
+                <div>
+
+                  <h2 className="text-lg font-semibold text-slate-900">
                     Sentiment Overview
-                  </h4>
+                  </h2>
 
+                  <p className="text-sm text-slate-500">
+                    Sentiment distribution across transcript segments.
+                  </p>
 
-                  <div className="mt-4 grid gap-4 sm:grid-cols-3">
+                </div>
 
-                    <div className="rounded-xl border border-green-200 bg-green-50 p-5">
+              </div>
 
-                      <p className="text-sm text-green-700">
-                        Positive
-                      </p>
+              <div className="mt-6 grid gap-4 md:grid-cols-3">
 
-                      <p className="mt-2 text-3xl font-bold text-green-700">
-                        {meeting.positive_sentiment ||
-                          0}
-                      </p>
+                <div className="rounded-xl border border-green-200 bg-green-50 p-5">
 
-                    </div>
+                  <p className="text-sm font-medium text-green-700">
+                    Positive
+                  </p>
 
+                  <p className="mt-2 text-3xl font-bold text-green-800">
+                    {meeting.positive_sentiment ??
+                      0}
+                  </p>
 
-                    <div className="rounded-xl border border-red-200 bg-red-50 p-5">
+                </div>
 
-                      <p className="text-sm text-red-700">
-                        Negative
-                      </p>
+                <div className="rounded-xl border border-red-200 bg-red-50 p-5">
 
-                      <p className="mt-2 text-3xl font-bold text-red-700">
-                        {meeting.negative_sentiment ||
-                          0}
-                      </p>
+                  <p className="text-sm font-medium text-red-700">
+                    Negative
+                  </p>
 
-                    </div>
+                  <p className="mt-2 text-3xl font-bold text-red-800">
+                    {meeting.negative_sentiment ??
+                      0}
+                  </p>
 
+                </div>
 
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-5">
 
-                      <p className="text-sm text-slate-600">
-                        Neutral
-                      </p>
+                  <p className="text-sm font-medium text-slate-600">
+                    Neutral
+                  </p>
 
-                      <p className="mt-2 text-3xl font-bold text-slate-700">
-                        {meeting.neutral_sentiment ||
-                          0}
-                      </p>
+                  <p className="mt-2 text-3xl font-bold text-slate-800">
+                    {meeting.neutral_sentiment ??
+                      0}
+                  </p>
 
-                    </div>
+                </div>
 
-                  </div>
+              </div>
 
-                </section>
+            </section>
 
+            {/* MEETING METRICS */}
 
-                {/* GENERAL METRICS */}
+            <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
 
-                <section>
+              <h2 className="text-lg font-semibold text-slate-900">
+                Meeting Metrics
+              </h2>
 
-                  <h4 className="font-semibold text-slate-900">
-                    Meeting Metrics
-                  </h4>
+              <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
 
+                <div className="rounded-lg bg-slate-50 p-4">
 
-                  <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                  <p className="text-xs text-slate-500">
+                    Duration
+                  </p>
 
-                    <div className="rounded-xl border border-slate-200 p-5">
+                  <p className="mt-2 text-xl font-bold text-slate-900">
+                    {formatDuration(
+                      meeting.duration
+                    )}
+                  </p>
 
-                      <p className="text-sm text-slate-500">
-                        Total Words
-                      </p>
+                </div>
 
-                      <p className="mt-2 text-2xl font-bold">
-                        {meeting.total_words ||
-                          0}
-                      </p>
+                <div className="rounded-lg bg-slate-50 p-4">
 
-                    </div>
+                  <p className="text-xs text-slate-500">
+                    Total Words
+                  </p>
 
+                  <p className="mt-2 text-xl font-bold text-slate-900">
+                    {meeting.total_words ||
+                      0}
+                  </p>
 
-                    <div className="rounded-xl border border-slate-200 p-5">
+                </div>
 
-                      <p className="text-sm text-slate-500">
-                        Speakers
-                      </p>
+                <div className="rounded-lg bg-slate-50 p-4">
 
-                      <p className="mt-2 text-2xl font-bold">
-                        {meeting.speaker_count ||
-                          0}
-                      </p>
+                  <p className="text-xs text-slate-500">
+                    Speakers
+                  </p>
 
-                    </div>
+                  <p className="mt-2 text-xl font-bold text-slate-900">
+                    {meeting.speaker_count ||
+                      0}
+                  </p>
 
+                </div>
 
-                    <div className="rounded-xl border border-slate-200 p-5">
+                <div className="rounded-lg bg-slate-50 p-4">
 
-                      <p className="text-sm text-slate-500">
-                        Action Items
-                      </p>
+                  <p className="text-xs text-slate-500">
+                    Action Items
+                  </p>
 
-                      <p className="mt-2 text-2xl font-bold">
-                        {actionItems.length}
-                      </p>
+                  <p className="mt-2 text-xl font-bold text-slate-900">
+                    {
+                      actionStats.total
+                    }
+                  </p>
 
-                    </div>
+                </div>
 
+              </div>
 
-                    <div className="rounded-xl border border-slate-200 p-5">
+            </section>
 
-                      <p className="text-sm text-slate-500">
-                        Score
-                      </p>
+            {/* SCORE */}
 
-                      <p className="mt-2 text-2xl font-bold text-blue-600">
-                        {effectivenessScore ??
-                          "-"}
-                      </p>
+            <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
 
-                    </div>
+              <div className="flex items-center justify-between">
 
-                  </div>
+                <div>
 
-                </section>
+                  <h2 className="text-lg font-semibold text-slate-900">
+                    Effectiveness Score
+                  </h2>
 
+                  <p className="mt-1 text-sm text-slate-500">
+                    Overall meeting performance.
+                  </p>
 
-                {/* SCORE BREAKDOWN */}
+                </div>
 
-                <section>
+                <div className="text-4xl font-bold text-slate-900">
+                  {score ??
+                    "—"}
+                </div>
 
-                  <h4 className="font-semibold text-slate-900">
-                    Effectiveness Breakdown
-                  </h4>
+              </div>
 
+              {Object.keys(
+                scoreBreakdown
+              ).length >
+                0 && (
+                <div className="mt-6 space-y-4">
 
-                  {scoreBreakdown ? (
+                  {Object.entries(
+                    scoreBreakdown
+                  ).map(
+                    (
+                      [
+                        key,
+                        value
+                      ]
+                    ) => {
 
-                    <div className="mt-4 space-y-3">
-
-                      {Object.entries(
-                        scoreBreakdown
-                      ).map(
-                        ([
-                          key,
+                      const numericValue =
+                        Number(
                           value
-                        ]) => (
+                        ) || 0;
 
-                          <div
-                            key={key}
-                            className="rounded-lg border border-slate-200 p-4"
-                          >
+                      return (
+                        <div
+                          key={key}
+                        >
 
-                            <div className="mb-2 flex justify-between">
+                          <div className="mb-1 flex justify-between text-xs">
 
-                              <span className="text-sm capitalize text-slate-600">
-                                {key.replaceAll(
-                                  "_",
-                                  " "
-                                )}
-                              </span>
+                            <span className="capitalize text-slate-600">
+                              {key.replace(
+                                /_/g,
+                                " "
+                              )}
+                            </span>
 
-                              <span className="text-sm font-semibold">
-                                {value}
-                              </span>
-
-                            </div>
-
-                            <div className="h-2 rounded-full bg-slate-100">
-
-                              <div
-                                className="h-full rounded-full bg-blue-500"
-                                style={{
-                                  width: `${Math.min(
-                                    Number(
-                                      value
-                                    ) || 0,
-                                    100
-                                  )}%`
-                                }}
-                              />
-
-                            </div>
+                            <span className="font-medium text-slate-700">
+                              {
+                                numericValue
+                              }
+                            </span>
 
                           </div>
 
-                        )
-                      )}
+                          <div className="h-2 overflow-hidden rounded-full bg-slate-100">
 
-                    </div>
+                            <div
+                              className="h-full rounded-full bg-slate-700"
+                              style={{
+                                width: `${Math.min(
+                                  numericValue,
+                                  100
+                                )}%`
+                              }}
+                            />
 
-                  ) : (
+                          </div>
 
-                    <div className="mt-4 rounded-xl border border-slate-200 p-6 text-sm text-slate-500">
-                      Score breakdown is not available.
-                    </div>
-
+                        </div>
+                      );
+                    }
                   )}
 
-                </section>
+                </div>
+              )}
 
-              </div>
-
-            )}
-
-          </div>
-
-        </div>
-
-
-        {/* ======================================== */}
-        {/* PROCESSING ACTION */}
-        {/* ======================================== */}
-
-        {meeting.status !==
-          "completed" &&
-          !processing && (
-
-          <div className="mt-6 rounded-xl border border-blue-200 bg-blue-50 p-5">
-
-            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-
-              <div>
-
-                <h3 className="font-semibold text-blue-900">
-                  Meeting processing
-                </h3>
-
-                <p className="mt-1 text-sm text-blue-700">
-                  Start the AI processing pipeline to generate transcription, speaker identification, analytics and insights.
-                </p>
-
-              </div>
-
-
-              <button
-                onClick={processMeeting}
-                className="flex shrink-0 items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-700"
-              >
-
-                <Sparkles size={17} />
-
-                Start AI Processing
-
-              </button>
-
-            </div>
+            </section>
 
           </div>
-
         )}
 
       </main>
