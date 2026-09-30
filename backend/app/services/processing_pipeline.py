@@ -222,6 +222,14 @@ def process_meeting_pipeline(meeting_id: int):
             "unknown",
         )
 
+        if transcript_segments:
+            meeting.duration = int(
+                max(
+                    float(segment.get("end", 0) or 0)
+                    for segment in transcript_segments
+                )
+            )
+
         print(
             f"[Pipeline] Transcription completed. "
             f"Segments: {len(transcript_segments)}"
@@ -278,14 +286,23 @@ def process_meeting_pipeline(meeting_id: int):
             "[Pipeline] Starting speaker diarization..."
         )
 
-        speaker_segments = diarize_audio(
-            meeting.audio_path
-        )
+        try:
+            speaker_segments = diarize_audio(
+                meeting.audio_path
+            )
 
-        print(
-            f"[Pipeline] Diarization completed. "
-            f"Speaker segments: {len(speaker_segments)}"
-        )
+            print(
+                f"[Pipeline] Diarization completed. "
+                f"Speaker segments: {len(speaker_segments)}"
+            )
+        except Exception as diarization_error:
+            # Speaker identification is an enhancement. If the
+            # Hugging Face model/token is unavailable, keep the
+            # transcript usable with UNKNOWN speakers.
+            print(
+                f"[Pipeline] Diarization unavailable: {diarization_error}"
+            )
+            speaker_segments = []
 
         # ====================================================
         # STEP 3 — MERGE TRANSCRIPT + SPEAKERS
@@ -301,10 +318,16 @@ def process_meeting_pipeline(meeting_id: int):
                 speaker_segments,
             )
         )
-        index_meeting(
-            meeting_id,
-            merged_segments
-        )
+        try:
+            index_meeting(
+                meeting_id,
+                merged_segments
+            )
+        except Exception as rag_error:
+            # RAG/Copilot indexing must not block the core meeting result.
+            print(
+                f"[Pipeline] RAG indexing skipped: {rag_error}"
+            )
 
         # Save merged segments
 
@@ -374,25 +397,20 @@ def process_meeting_pipeline(meeting_id: int):
             if not text:
                 continue
 
-            sentiment = analyze_sentiment(
-                text
-            )
+            try:
+                sentiment = analyze_sentiment(text)
+                label = sentiment.get("label", "neutral").lower()
 
-            label = sentiment.get(
-                "label",
-                "neutral",
-            ).lower()
-
-            if label == "positive":
-
-                positive_sentiment += 1
-
-            elif label == "negative":
-
-                negative_sentiment += 1
-
-            else:
-
+                if label == "positive":
+                    positive_sentiment += 1
+                elif label == "negative":
+                    negative_sentiment += 1
+                else:
+                    neutral_sentiment += 1
+            except Exception as sentiment_error:
+                print(
+                    f"[Pipeline] Sentiment skipped for segment: {sentiment_error}"
+                )
                 neutral_sentiment += 1
 
         print(
@@ -537,7 +555,12 @@ def process_meeting_pipeline(meeting_id: int):
         )
 
         analytics = calculate_meeting_analytics(
-            merged_segments
+            merged_segments,
+            sentiment_counts={
+                "positive": positive_sentiment,
+                "negative": negative_sentiment,
+                "neutral": neutral_sentiment,
+            },
         )
 
         # ----------------------------------------------------
@@ -733,8 +756,8 @@ def process_meeting_pipeline(meeting_id: int):
                 }
             )
 
-        insights_result = (
-            generate_meeting_insights(
+        try:
+            insights_result = generate_meeting_insights(
                 transcript=transcript.content,
                 score=meeting.effectiveness_score,
                 rating=meeting.effectiveness_rating,
@@ -744,19 +767,17 @@ def process_meeting_pipeline(meeting_id: int):
                 negative_sentiment=negative_sentiment,
                 neutral_sentiment=neutral_sentiment,
             )
-        )
-
-        insights = insights_result.get(
-            "insights",
-            [],
-        )
-
-        recommendations = (
-            insights_result.get(
-                "recommendations",
-                [],
+        except Exception as insight_error:
+            print(
+                f"[Pipeline] AI insights skipped: {insight_error}"
             )
-        )
+            insights_result = {
+                "insights": [],
+                "recommendations": [],
+            }
+
+        insights = insights_result.get("insights", [])
+        recommendations = insights_result.get("recommendations", [])
 
         meeting.meeting_insights = json.dumps(
             insights
@@ -809,16 +830,21 @@ def process_meeting_pipeline(meeting_id: int):
             .all()
         )
 
-        generate_meeting_pdf(
-            meeting=meeting,
-            transcript=transcript,
-            action_items=saved_action_items,
-            speaker_analytics=saved_speaker_analytics,
-        )
-
-        print(
-            "[Pipeline] PDF report generated."
-        )
+        try:
+            generate_meeting_pdf(
+                meeting=meeting,
+                transcript=transcript,
+                action_items=saved_action_items,
+                speaker_analytics=saved_speaker_analytics,
+            )
+            print(
+                "[Pipeline] PDF report generated."
+            )
+        except Exception as report_error:
+            # Report generation is non-critical to meeting completion.
+            print(
+                f"[Pipeline] PDF report skipped: {report_error}"
+            )
 
         # ====================================================
         # STEP 11 — COMPLETED

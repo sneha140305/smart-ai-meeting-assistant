@@ -1,6 +1,7 @@
 import json
 import os
 from datetime import datetime
+from pathlib import Path
 
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER
@@ -17,12 +18,9 @@ from reportlab.platypus import (
 )
 
 
-REPORT_DIRECTORY = "reports"
-
-os.makedirs(
-    REPORT_DIRECTORY,
-    exist_ok=True
-)
+BASE_DIR = Path(__file__).resolve().parents[2]
+REPORT_DIRECTORY = BASE_DIR / "reports"
+REPORT_DIRECTORY.mkdir(parents=True, exist_ok=True)
 
 
 def safe_json(value, default=None):
@@ -56,10 +54,7 @@ def generate_meeting_pdf(
     action_items,
     speaker_analytics,
 ):
-    file_path = os.path.join(
-        REPORT_DIRECTORY,
-        f"meeting_report_{meeting.id}.pdf"
-    )
+    file_path = REPORT_DIRECTORY / f"meeting_report_{meeting.id}.pdf"
 
     document = SimpleDocTemplate(
         file_path,

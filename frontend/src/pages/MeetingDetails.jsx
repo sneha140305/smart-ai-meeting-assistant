@@ -379,6 +379,29 @@ export default function MeetingDetails() {
   }, [meetingId]);
 
   // =========================================================
+  // PROCESSING FALLBACK POLLING
+  // =========================================================
+
+  useEffect(() => {
+    const activeStatuses = [
+      "processing",
+      "transcribing",
+      "diarizing",
+      "analyzing"
+    ];
+
+    if (!meetingId || !activeStatuses.includes(meeting?.status)) {
+      return;
+    }
+
+    const interval = setInterval(() => {
+      loadMeeting();
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [meetingId, meeting?.status]);
+
+  // =========================================================
   // AUDIO
   // =========================================================
 
@@ -726,7 +749,7 @@ export default function MeetingDetails() {
 
       const response =
         await api.patch(
-          `/meetings/action-items/${itemId}`,
+          `/meetings/${meetingId}/action-items/${itemId}`,
           updates
         );
 

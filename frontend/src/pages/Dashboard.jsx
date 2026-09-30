@@ -20,9 +20,11 @@ import {
 import api from "../services/api";
 import MeetingStatusBadge from "../components/MeetingStatusBadge";
 import MeetingProcessingBar from "../components/MeetingProcessingBar";
+import { useAuth } from "../context/AuthContext";
 
 export default function Dashboard() {
   const navigate = useNavigate();
+  const { logout } = useAuth();
 
   const [meetings, setMeetings] = useState([]);
   const [searchResults, setSearchResults] = useState([]);
@@ -327,8 +329,7 @@ export default function Dashboard() {
   // --------------------------------------------------
 
   const handleLogout = () => {
-    localStorage.removeItem("token");
-
+    logout();
     navigate("/");
   };
 

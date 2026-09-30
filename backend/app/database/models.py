@@ -6,7 +6,8 @@ from sqlalchemy import (
     String,
     Text,
     DateTime,
-    ForeignKey
+    ForeignKey,
+    Float
 )
 
 from sqlalchemy.orm import relationship
@@ -306,8 +307,8 @@ class SpeakerAnalytics(Base):
     )
 
     speaking_time = Column(
-        Integer,
-        default=0
+        Float,
+        default=0.0
     )
 
     word_count = Column(

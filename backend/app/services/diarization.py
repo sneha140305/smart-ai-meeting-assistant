@@ -8,16 +8,24 @@ from pyannote.audio import Pipeline
 
 load_dotenv()
 
-HF_TOKEN = os.getenv("HF_TOKEN")
-
-if not HF_TOKEN:
-    raise RuntimeError("HF_TOKEN is not configured in .env")
+_pipeline = None
 
 
-pipeline = Pipeline.from_pretrained(
-    "pyannote/speaker-diarization-community-1",
-    token=HF_TOKEN
-)
+def get_pipeline():
+    global _pipeline
+
+    if _pipeline is None:
+        hf_token = os.getenv("HF_TOKEN")
+
+        if not hf_token:
+            raise RuntimeError("HF_TOKEN is not configured in .env")
+
+        _pipeline = Pipeline.from_pretrained(
+            "pyannote/speaker-diarization-community-1",
+            token=hf_token
+        )
+
+    return _pipeline
 
 
 def diarize_audio(audio_path: str):
@@ -68,7 +76,7 @@ def diarize_audio(audio_path: str):
     # Automatic speaker detection
     # ---------------------------------------------------------
 
-    output = pipeline(audio)
+    output = get_pipeline()(audio)
 
     print("\n" + "=" * 60)
     print("PYANNOTE OUTPUT")

@@ -1,34 +1,38 @@
 from transformers import pipeline
 
 
-sentiment_model = pipeline(
-    "sentiment-analysis",
-    model="distilbert-base-uncased-finetuned-sst-2-english"
-)
+_sentiment_model = None
+
+
+def get_sentiment_model():
+    """Load the local sentiment model only when it is first needed."""
+    global _sentiment_model
+
+    if _sentiment_model is None:
+        _sentiment_model = pipeline(
+            "sentiment-analysis",
+            model="distilbert-base-uncased-finetuned-sst-2-english",
+        )
+
+    return _sentiment_model
 
 
 def analyze_sentiment(text: str):
-
+    """Return positive/negative/neutral sentiment for a text segment."""
     if not text or not text.strip():
-        return {
-            "label": "neutral",
-            "score": 0.0
-        }
+        return {"label": "neutral", "score": 0.0}
 
-    result = sentiment_model(
-        text[:512]
-    )[0]
+    model = get_sentiment_model()
+    result = model(text[:512])[0]
 
-    label = result["label"].lower()
+    label = str(result["label"]).lower()
     score = float(result["score"])
 
-    # Low-confidence predictions are treated as neutral.
-    if score < 0.65:
-        final_label = "neutral"
-    else:
-        final_label = label
+    # The underlying model is binary. Low-confidence predictions are
+    # treated as neutral for meeting-level analytics.
+    final_label = "neutral" if score < 0.65 else label
 
     return {
         "label": final_label,
-        "score": round(score, 4)
+        "score": round(score, 4),
     }

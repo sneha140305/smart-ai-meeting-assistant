@@ -1,16 +1,41 @@
-# React + Vite
+# Smart AI Meeting Assistant — Backend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+## Run
 
-Currently, two official plugins are available:
+From the `backend` directory:
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+```powershell
+python -m venv .venv
+.\.venv\Scripts\activate
+pip install -r requirements.txt
+python -m uvicorn app.main:app --reload
+```
 
-## React Compiler
+Create `backend/.env` locally (do not commit it):
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+```env
+SECRET_KEY=replace-with-a-long-random-secret
+HF_TOKEN=your-hugging-face-token
+```
 
-## Expanding the ESLint configuration
+Required local services/tools:
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+- FFmpeg available on PATH
+- Ollama running locally with `llama3.2:3b`
+- Hugging Face access for `pyannote/speaker-diarization-community-1` if speaker diarization is desired
+
+Ollama setup:
+
+```powershell
+ollama serve
+ollama pull llama3.2:3b
+```
+
+API: `http://127.0.0.1:8000`
+
+Run the lightweight tests with:
+
+```powershell
+pytest -q
+```
+

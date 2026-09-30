@@ -181,13 +181,13 @@ export default function NewMeeting() {
         "/meetings/upload",
         formData,
         {
-          headers: {
-            "Content-Type": "multipart/form-data",
-          },
+          // Axios sets the multipart boundary automatically.
         }
       );
 
-      const meetingId = uploadResponse.data.id;
+      const meetingId =
+        uploadResponse.data.meeting_id ??
+        uploadResponse.data.id;
 
       if (!meetingId) {
         throw new Error(

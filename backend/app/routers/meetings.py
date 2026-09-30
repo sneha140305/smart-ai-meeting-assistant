@@ -1,9 +1,7 @@
 import json
 import os
-import shutil
-from unittest import result
-from unittest import result
 import uuid
+from pathlib import Path
 
 from fastapi import (
     APIRouter,
@@ -28,17 +26,10 @@ from app.database.models import (
 )
 
 from app.services.audio_processor import extract_audio
-from app.services.transcription import transcribe_audio
-from app.services.diarization import diarize_audio
-from app.services.meeting_ai import (
-    analyze_meeting,
-    generate_meeting_insights,
-)
 from app.services.processing_pipeline import (
     process_meeting_pipeline,
 )
-from app.services.pdf_report import generate_meeting_pdf
-from app.schemas.meeting import MeetingQuestion
+from app.schemas.meeting import MeetingQuestion, ActionItemUpdate
 from app.services.meeting_rag import ask_meeting_rag
 router = APIRouter(
     prefix="/meetings",
@@ -46,12 +37,9 @@ router = APIRouter(
 )
 
 
-UPLOAD_DIRECTORY = "uploads"
-
-os.makedirs(
-    UPLOAD_DIRECTORY,
-    exist_ok=True
-)
+BASE_DIR = Path(__file__).resolve().parents[2]
+UPLOAD_DIRECTORY = BASE_DIR / "uploads"
+UPLOAD_DIRECTORY.mkdir(parents=True, exist_ok=True)
 
 
 # ============================================================
@@ -95,10 +83,7 @@ async def upload_meeting(
         f"{uuid.uuid4().hex}{extension}"
     )
 
-    file_path = os.path.join(
-        UPLOAD_DIRECTORY,
-        unique_filename
-    )
+    file_path = UPLOAD_DIRECTORY / unique_filename
 
     try:
 
@@ -149,7 +134,7 @@ async def upload_meeting(
     meeting = Meeting(
         title=title,
         file_name=original_filename,
-        file_path=file_path,
+        file_path=str(file_path),
         status="processing",
         owner_id=current_user.id,
     )
@@ -165,7 +150,7 @@ async def upload_meeting(
     try:
 
         audio_path = extract_audio(
-            file_path,
+            str(file_path),
             meeting.id
         )
 
@@ -329,6 +314,7 @@ def search_meetings(
 
     return meetings
 
+
 @router.post("/{meeting_id}/ask")
 def ask_question(
     meeting_id: int,
@@ -375,7 +361,7 @@ def ask_question(
 
     try:
 
-        answer = ask_meeting_rag(
+        result = ask_meeting_rag(
             meeting_id=meeting_id,
             question=question
         )
@@ -883,8 +869,7 @@ def get_action_items(
 def update_action_item(
     meeting_id: int,
     action_item_id: int,
-    status: str | None = None,
-    priority: str | None = None,
+    request: ActionItemUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -930,25 +915,25 @@ def update_action_item(
         "high",
     }
 
-    if status is not None:
+    if request.status is not None:
 
-        if status not in allowed_statuses:
+        if request.status not in allowed_statuses:
             raise HTTPException(
                 status_code=400,
                 detail="Invalid status."
             )
 
-        action_item.status = status
+        action_item.status = request.status
 
-    if priority is not None:
+    if request.priority is not None:
 
-        if priority not in allowed_priorities:
+        if request.priority not in allowed_priorities:
             raise HTTPException(
                 status_code=400,
                 detail="Invalid priority."
             )
 
-        action_item.priority = priority
+        action_item.priority = request.priority
 
     db.commit()
     db.refresh(action_item)

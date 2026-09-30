@@ -18,12 +18,9 @@ api.interceptors.request.use(
 );
 
 export default api;
-export const updateActionItem = (meetingId, actionItemId, status) => {
+export const updateActionItem = (meetingId, actionItemId, updates) => {
   return api.patch(
     `/meetings/${meetingId}/action-items/${actionItemId}`,
-    null,
-    {
-      params: { status },
-    }
+    updates
   );
 };

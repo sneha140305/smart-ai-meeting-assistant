@@ -6,12 +6,20 @@ from faster_whisper import WhisperModel
 MODEL_SIZE = "small"
 
 
-# Load Whisper once when the application starts.
-model = WhisperModel(
-    MODEL_SIZE,
-    device="cpu",
-    compute_type="int8"
-)
+_model = None
+
+
+def get_model():
+    global _model
+
+    if _model is None:
+        _model = WhisperModel(
+            MODEL_SIZE,
+            device="cpu",
+            compute_type="int8"
+        )
+
+    return _model
 
 
 def load_audio(audio_path: str, sampling_rate: int = 16000):
@@ -84,6 +92,8 @@ def transcribe_audio(audio_path: str):
 
     audio = load_audio(audio_path)
 
+    model = get_model()
+
     segments, info = model.transcribe(
         audio,
         beam_size=5,
@@ -109,5 +119,3 @@ def transcribe_audio(audio_path: str):
         ),
         "segments": transcript_segments
     }
-
-
