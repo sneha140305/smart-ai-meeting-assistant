@@ -1,21 +1,29 @@
-from pathlib import Path
+import os
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    "sqlite:///./meeting_assistant.db"
+)
 
-BASE_DIR = Path(__file__).resolve().parents[2]
-DATABASE_URL = f"sqlite:///{(BASE_DIR / 'meeting_assistant.db').as_posix()}"
+connect_args = {}
+
+if DATABASE_URL.startswith("sqlite"):
+    connect_args = {
+        "check_same_thread": False
+    }
 
 engine = create_engine(
     DATABASE_URL,
-    connect_args={"check_same_thread": False},
+    connect_args=connect_args
 )
 
 SessionLocal = sessionmaker(
     autocommit=False,
     autoflush=False,
-    bind=engine,
+    bind=engine
 )
 
 Base = declarative_base()
@@ -23,6 +31,7 @@ Base = declarative_base()
 
 def get_db():
     db = SessionLocal()
+
     try:
         yield db
     finally:
