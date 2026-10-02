@@ -1,3 +1,4 @@
+import os
 from fastapi import FastAPI
 
 from app.database.database import Base, engine
@@ -8,11 +9,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.routers.websocket import router as websocket_router
 Base.metadata.create_all(bind=engine)
 
-
 app = FastAPI(
     title="Smart AI Meeting Assistant",
     description="AI-powered meeting analysis platform",
     version="1.0.0"
+)
+FRONTEND_URL = os.getenv(
+    "FRONTEND_URL",
+    "http://localhost:5173"
 )
 
 app.add_middleware(
@@ -20,6 +24,7 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        FRONTEND_URL,
     ],
     allow_credentials=True,
     allow_methods=["*"],
