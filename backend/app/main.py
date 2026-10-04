@@ -1,46 +1,67 @@
 import os
+
+from dotenv import load_dotenv
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.database.database import Base, engine
 from app.database import models
+
 from app.routers.auth import router as auth_router
 from app.routers.meetings import router as meetings_router
-from fastapi.middleware.cors import CORSMiddleware
-from app.routers.websocket import router as websocket_router
+
+load_dotenv()
+
+
 Base.metadata.create_all(bind=engine)
+
 
 app = FastAPI(
     title="Smart AI Meeting Assistant",
-    description="AI-powered meeting analysis platform",
-    version="1.0.0"
+    description="AI-powered meeting intelligence platform",
+    version="1.0.0",
 )
+
 FRONTEND_URL = os.getenv(
     "FRONTEND_URL",
     "http://localhost:5173"
 )
 
+allowed_origins = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+
+if FRONTEND_URL and FRONTEND_URL not in allowed_origins:
+    allowed_origins.append(FRONTEND_URL)
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        FRONTEND_URL,
-    ],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+app.include_router(
+    auth_router,
+    prefix="/auth",
+    tags=["Authentication"],
+)
 
-app.include_router(auth_router)
-app.include_router(meetings_router)
-app.include_router(websocket_router)
+app.include_router(
+    meetings_router,
+    prefix="/meetings",
+    tags=["Meetings"],
+)
 
 @app.get("/")
 def root():
     return {
         "message": "Smart AI Meeting Assistant API",
-        "status": "running"
+        "status": "running",
+        "version": "1.0.0",
     }
 
 
@@ -48,5 +69,5 @@ def root():
 def health_check():
     return {
         "status": "healthy",
-        "database": "connected"
+        "database": "connected",
     }

@@ -24,13 +24,9 @@ from app.database.models import (
     ActionItem,
     SpeakerAnalytics,
 )
-
-from app.services.audio_processor import extract_audio
-from app.services.processing_pipeline import (
-    process_meeting_pipeline,
-)
 from app.schemas.meeting import MeetingQuestion, ActionItemUpdate
-from app.services.meeting_rag import ask_meeting_rag
+
+
 router = APIRouter(
     prefix="/meetings",
     tags=["Meetings"]
@@ -86,7 +82,6 @@ async def upload_meeting(
     file_path = UPLOAD_DIRECTORY / unique_filename
 
     try:
-
         file_size = 0
 
         with open(file_path, "wb") as buffer:
@@ -148,6 +143,10 @@ async def upload_meeting(
     # --------------------------------------------------------
 
     try:
+
+        # Lazy import so heavy AI/audio dependencies
+        # are not loaded when FastAPI starts.
+        from app.services.audio_processor import extract_audio
 
         audio_path = extract_audio(
             str(file_path),
@@ -227,8 +226,12 @@ def process_meeting(
     db.commit()
 
     # --------------------------------------------------------
-    # RUN AI PIPELINE IN BACKGROUND
+    # LAZY IMPORT
     # --------------------------------------------------------
+
+    from app.services.processing_pipeline import (
+        process_meeting_pipeline,
+    )
 
     background_tasks.add_task(
         process_meeting_pipeline,
@@ -315,6 +318,10 @@ def search_meetings(
     return meetings
 
 
+# ============================================================
+# AI COPILOT / ASK QUESTION
+# ============================================================
+
 @router.post("/{meeting_id}/ask")
 def ask_question(
     meeting_id: int,
@@ -361,6 +368,9 @@ def ask_question(
 
     try:
 
+        # Lazy import
+        from app.services.meeting_rag import ask_meeting_rag
+
         result = ask_meeting_rag(
             meeting_id=meeting_id,
             question=question
@@ -378,6 +388,8 @@ def ask_question(
             status_code=500,
             detail=f"AI Copilot failed: {str(error)}"
         )
+
+
 # ============================================================
 # GET SINGLE MEETING
 # ============================================================
@@ -441,6 +453,9 @@ def transcribe_meeting(
 
         meeting.status = "transcribing"
         db.commit()
+
+        # Lazy import
+        from app.services.transcription import transcribe_audio
 
         result = transcribe_audio(
             meeting.audio_path
@@ -547,6 +562,9 @@ def diarize_meeting(
 
         meeting.status = "diarizing"
         db.commit()
+
+        # Lazy import
+        from app.services.diarization import diarize_audio
 
         speaker_segments = diarize_audio(
             meeting.audio_path
@@ -735,6 +753,9 @@ def analyze_meeting_endpoint(
 
         meeting.status = "analyzing"
         db.commit()
+
+        # Lazy import
+        from app.services.meeting_ai import analyze_meeting
 
         result = analyze_meeting(
             transcript.content
@@ -1089,6 +1110,9 @@ def download_meeting_report(
     )
 
     try:
+
+        # Lazy import
+        from app.services.pdf_report import generate_meeting_pdf
 
         report_path = generate_meeting_pdf(
             meeting=meeting,
