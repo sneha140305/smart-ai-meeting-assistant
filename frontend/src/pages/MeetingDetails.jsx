@@ -289,116 +289,85 @@ export default function MeetingDetails() {
   }, [meetingId]);
 
   // =========================================================
-  // WEBSOCKET PROCESSING
+  // PROCESSING POLLING
   // =========================================================
-
-  useEffect(() => {
-    if (!meetingId) {
-      return;
-    }
-
-    const socket = new WebSocket(
-      `ws://127.0.0.1:8000/ws/meetings/${meetingId}`
-    );
-
-    socket.onopen = () => {
-      console.log(
-        "Connected to meeting processing updates"
-      );
-    };
-
-    socket.onmessage = (event) => {
-      try {
-        const data = JSON.parse(
-          event.data
-        );
-
-        console.log(
-          "Processing update:",
-          data
-        );
-
-        setLiveProgress(data);
-
-        setMeeting((previous) => {
-          if (!previous) {
-            return previous;
-          }
-
-          return {
-            ...previous,
-
-            status:
-              data.status ||
-              previous.status,
-
-            processing_stage:
-              data.stage ||
-              previous.processing_stage,
-
-            processing_message:
-              data.message ||
-              previous.processing_message,
-
-            processing_progress:
-              data.progress ??
-              previous.processing_progress
-          };
-        });
-
-        if (
-          data.status === "completed"
-        ) {
-          loadAll();
-        }
-
-      } catch (err) {
-        console.error(
-          "WebSocket message error:",
-          err
-        );
-      }
-    };
-
-    socket.onerror = (event) => {
-      console.error(
-        "WebSocket error:",
-        event
-      );
-    };
-
-    socket.onclose = () => {
-      console.log(
-        "Meeting WebSocket disconnected"
-      );
-    };
-
-    return () => {
-      socket.close();
-    };
-  }, [meetingId]);
-
-  // =========================================================
-  // PROCESSING FALLBACK POLLING
+  //
+  // The backend processing pipeline runs as a background task.
+  // We poll the meeting status and reload generated data when
+  // processing is complete. This avoids the localhost WebSocket
+  // dependency and works with the deployed API/tunnel as well.
   // =========================================================
 
   useEffect(() => {
     const activeStatuses = [
       "processing",
+      "preprocessing",
+      "audio_ready",
       "transcribing",
       "diarizing",
       "analyzing"
     ];
 
-    if (!meetingId || !activeStatuses.includes(meeting?.status)) {
+    if (
+      !meetingId ||
+      !activeStatuses.includes(meeting?.status)
+    ) {
       return;
     }
 
-    const interval = setInterval(() => {
-      loadMeeting();
-    }, 2000);
+    let cancelled = false;
 
-    return () => clearInterval(interval);
+    const pollProcessing = async () => {
+      try {
+        const response = await api.get(
+          `/meetings/${meetingId}`
+        );
+
+        if (cancelled) {
+          return;
+        }
+
+        const updatedMeeting = response.data;
+
+        setMeeting(updatedMeeting);
+
+        setLiveProgress({
+          status: updatedMeeting.status,
+          stage: updatedMeeting.processing_stage,
+          message: updatedMeeting.processing_message,
+          progress: updatedMeeting.processing_progress
+        });
+
+        // The pipeline saves transcript, action items and
+        // speaker analytics during/after processing. Once the
+        // meeting is completed, fetch the final generated data.
+        if (updatedMeeting.status === "completed") {
+          await Promise.all([
+            loadTranscript(),
+            loadActionItems(),
+            loadSpeakerAnalytics()
+          ]);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          console.error(
+            "Processing polling error:",
+            err
+          );
+        }
+      }
+    };
+
+    // Check every 2 seconds while processing.
+    const interval = setInterval(
+      pollProcessing,
+      2000
+    );
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, [meetingId, meeting?.status]);
 
   // =========================================================

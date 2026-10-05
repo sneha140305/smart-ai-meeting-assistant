@@ -57,7 +57,7 @@ def generate_meeting_pdf(
     file_path = REPORT_DIRECTORY / f"meeting_report_{meeting.id}.pdf"
 
     document = SimpleDocTemplate(
-        file_path,
+        str(file_path),
         pagesize=A4,
         rightMargin=18 * mm,
         leftMargin=18 * mm,
